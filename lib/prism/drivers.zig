@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const build_options = @import("build-options");
 const driver = @import("driver.zig");
 
@@ -9,7 +10,7 @@ pub const software = @import("drivers/software.zig");
 /// An unselected driver's source is in a comptime-dead branch and never analyzed.
 fn buildAll() []const Driver {
     const sw_list: []const Driver = if (build_options.driver_software) &[_]Driver{@import("drivers/software.zig").driver} else &.{};
-    const ap_list: []const Driver = if (build_options.driver_apple) &[_]Driver{@import("drivers/apple.zig").driver} else &.{};
+    const ap_list: []const Driver = if (build_options.driver_apple and builtin.cpu.arch == .aarch64) &[_]Driver{@import("drivers/apple.zig").driver} else &.{};
     const nv_list: []const Driver = if (build_options.driver_nvidia) &[_]Driver{@import("drivers/nvidia.zig").driver} else &.{};
     const vg_list: []const Driver = if (build_options.driver_virgl) &[_]Driver{@import("drivers/virgl.zig").driver} else &.{};
     // Auto-selection preference order: real hardware drivers first, the software
