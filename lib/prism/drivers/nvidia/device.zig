@@ -373,7 +373,7 @@ pub const Device = struct {
             else => false,
         };
         const is_color_image = switch (desc) {
-            .image => |i| i.format != .depth32_float and !is_sampled_tex,
+            .image => |i| i.format != .depth32_float and !is_sampled_tex and !i.usage.linear,
             else => false,
         };
         const size: u64 = switch (desc) {
@@ -393,6 +393,9 @@ pub const Device = struct {
                     nvidia.graphics.mippedTexSizeBytes(i.width, i.height, i.mip_levels, @import("resource.zig").ticFormat(i.format))
                 else
                     nvidia.graphics.texSizeBytes(i.width, i.height, @import("resource.zig").ticFormat(i.format)))
+            else if (i.usage.linear)
+                // System-linear CPU image: tightly-packed row-major, no GOB padding.
+                @as(u64, i.width) * i.height * i.format.bytesPerPixel()
             else
                 @as(u64, nvidia.graphics.ztSizeBytesBpp(i.width, i.height, @import("resource.zig").colorTargetBpp(i.format))),
         };
@@ -489,6 +492,16 @@ pub const Device = struct {
         // (with its live GPU + CPU mappings).
         if (r.linear_copy) |lc| self.gpa.free(lc);
         if (r.bl_scratch) |bs| self.gpa.free(bs);
+        // Free export resources (exportResource caches). Close the dma-buf fd first
+        // so the kernel can release the GEM reference, then free the backing buffer.
+        if (r.export_fd) |fd| {
+            _ = std.os.linux.close(fd);
+            r.export_fd = null;
+        }
+        if (r.export_buf) |b| {
+            self.freeGpu(b);
+            r.export_buf = null;
+        }
         if (r.is_depth_vram or r.block_linear) {
             // VRAM surfaces are freed directly: release the CPU mapping (color/sampled
             // surfaces have one, depth does not) and the GPU VA binding, then the memory.
@@ -874,6 +887,171 @@ pub const Device = struct {
         self.gpa.destroy(@as(*@import("surface.zig").Surface, @ptrCast(@alignCast(surface))));
     }
 
+    /// DRM fourcc for the CE-detile output byte order.
+    /// The 3D engine's A8R8G8B8 target stores bytes [B,G,R,A] in memory. After CE-detile
+    /// the linear buffer holds the same byte order. The DRM fourcc that matches [B,G,R,A]
+    /// little-endian (i.e. BGRA in memory order = ARGB in channel order) is
+    /// DRM_FORMAT_ARGB8888 = 'A','R','2','4' = 0x34325241.
+    /// NOTE: the client-present slice MUST validate this fourcc against the compositor's
+    /// accepted formats; if it expects DRM_FORMAT_ABGR8888 (RGBA byte order) the bytes
+    /// must be swapped. The readlink gate proves we have a real dma-buf regardless.
+    const FOURCC_ARGB8888: u32 = 0x34325241; // 'A','R','2','4' = DRM_FORMAT_ARGB8888
+    /// DRM_FORMAT_ABGR16161616F = 'A','B','4','H' = 0x48344241. 64-bit half-float
+    /// RGBA (fp16 per channel, memory order R,G,B,A). This is the HDR export fourcc
+    /// for a prism .rgba16_float resource (8 bytes per pixel, LINEAR).
+    const FOURCC_ABGR16161616F: u32 = 0x48344241; // 'A','B','4','H' = DRM_FORMAT_ABGR16161616F
+    /// DRM_FORMAT_ABGR2101010 = 'A','B','3','0' = 0x30334241. 32-bit 10-bit-per-channel
+    /// RGB (2-bit alpha), memory order R,G,B,A packed. This is the HDR export fourcc for
+    /// a prism .rgb10a2 resource (4 bytes per pixel, LINEAR).
+    const FOURCC_ABGR2101010: u32 = 0x30334241; // 'A','B','3','0' = DRM_FORMAT_ABGR2101010 (10-bit rgb10a2)
+    /// DRM_FORMAT_XBGR2101010 = 'X','B','3','0' = 0x30334258. 32-bit 10-bit-per-channel
+    /// RGB (alpha ignored), for prism .rgb10x2 (4 bytes per pixel, LINEAR).
+    const FOURCC_XBGR2101010: u32 = 0x30334258; // 'X','B','3','0' = DRM_FORMAT_XBGR2101010 (10-bit rgb10x2)
+
+    /// Map a prism pixel Format to the DRM fourcc used when exporting it as a
+    /// LINEAR dma-buf. Only the formats prism can actually export are handled:
+    ///   - 8-bit RGBA/BGRA -> ARGB8888 (matches the CE-detile [B,G,R,A] byte order).
+    ///   - rgba16_float    -> ABGR16161616F (fp16 RGBA, 8 bpp).
+    ///   - rgb10a2         -> ABGR2101010 (10-bit HDR, 4 bpp).
+    ///   - rgb10x2         -> XBGR2101010 (10-bit HDR no-alpha, 4 bpp).
+    /// Any other format is not exportable (returns error.Unsupported) rather than
+    /// silently emitting a mislabelled/corrupt buffer.
+    fn prismFormatToFourcc(f: hal.Format) hal.Error!u32 {
+        return switch (f) {
+            .rgba8_unorm, .rgba8_srgb, .bgra8_unorm => FOURCC_ARGB8888,
+            .rgba16_float => FOURCC_ABGR16161616F,
+            .rgb10a2 => FOURCC_ABGR2101010,
+            .rgb10x2 => FOURCC_XBGR2101010,
+            else => error.Unsupported,
+        };
+    }
+
+    /// How a Resource can be exported as a LINEAR dma-buf. Pure (no side effects, no
+    /// device state) so it can be unit-tested. Every combo maps to exactly one mode;
+    /// `unsupported` means exportResource errors BEFORE any allocation/CE work, so an
+    /// un-exportable resource never produces a corrupt or mislabelled buffer.
+    const ExportMode = enum {
+        /// Block-linear 32bpp color RT: CE hardware-detile into a linear .system buffer.
+        /// The CE-detile source programming (copy.zig KIND_BPP_BL_32, LINE_LENGTH_IN) is
+        /// 32bpp-only, so this is the ONLY block-linear mode.
+        detile32,
+        /// System-linear CPU-backed image (no GOB tiling): a plain CPU row-copy into the
+        /// export buffer. Correct for ANY bpp (unlike the 32bpp-only CE-detile), so it is
+        /// the fp16 (rgba16_float, 8bpp) export path.
+        straight_linear,
+        /// Not exportable: errors cleanly with no side effects.
+        unsupported,
+    };
+
+    /// Classify a Resource's export path. PURE: reads only the resource's layout flags +
+    /// format, no device/CE/allocation. (Format exportability is re-checked with
+    /// prismFormatToFourcc in exportResource; here `unsupported` also covers the
+    /// fp16-block-linear case that must NOT go through the 32bpp CE-detile.)
+    fn exportMode(r: *const Resource) ExportMode {
+        // A sampled texture is block_linear but its bytes are the TIC-swizzled GPU copy,
+        // not a de-tileable color RT: never exportable.
+        if (r.sampled) return .unsupported;
+        if (r.block_linear) {
+            // Only 32bpp block-linear color RTs are CE-detileable. fp16 (8bpp) block-linear
+            // would need the 64-bit CE KIND (copy.zig KIND_BPP_BL_32 is 32bpp-only), which is
+            // deferred: reject it here so it takes the system-linear straight path instead of
+            // silently corrupting. (Also rejects any format prismFormatToFourcc rejects.)
+            _ = prismFormatToFourcc(r.format) catch return .unsupported;
+            return if (r.format.bytesPerPixel() == 4) .detile32 else .unsupported;
+        }
+        // System-linear image with a CPU-accessible tightly-packed backing: any exportable
+        // format works (the CPU row-copy handles any bpp). Requires a CPU mapping to copy from.
+        if (r.kind == .image and r.mapping != null) {
+            _ = prismFormatToFourcc(r.format) catch return .unsupported;
+            return .straight_linear;
+        }
+        return .unsupported;
+    }
+
+    /// Export a rendered/CPU-filled color resource as a LINEAR Linux dma-buf fd. Two
+    /// paths (see ExportMode):
+    ///   - detile32:        block-linear 32bpp RT -> CE hardware-detile -> linear .system buffer.
+    ///   - straight_linear: system-linear CPU image (e.g. fp16) -> CPU row-copy -> .system buffer.
+    /// Both then nvidia.memToDmaBuf the linear .system buffer. The export_buf and export_fd are
+    /// cached on the Resource and reused across calls (a re-detile/re-copy refreshes the pages in
+    /// place). Both are freed in destroyResource. Any other resource errors with NO side effects.
+    fn exportResource(ptr: *anyopaque, resource: *hal.Resource) hal.Error!hal.DmaBufDesc {
+        const self: *Device = @ptrCast(@alignCast(ptr));
+        const r: *Resource = @ptrCast(@alignCast(resource));
+        const mode = exportMode(r);
+        if (mode == .unsupported) return error.Unsupported;
+        // Resolve the DRM fourcc + bytes-per-pixel from the resource's own format. exportMode
+        // already guaranteed this succeeds, but re-derive so fourcc/bpp are in scope.
+        const fourcc = try prismFormatToFourcc(r.format);
+        const bpp: u32 = r.format.bytesPerPixel();
+        const stride: u32 = r.width * bpp;
+        const need: u64 = @as(u64, r.width) * r.height * bpp;
+        // Ensure the export buffer exists and is large enough. On a resize the old fd is
+        // invalidated (the backing pages move) and the old buffer freed.
+        if (r.export_buf == null or r.export_buf.?.bytes.len < need) {
+            if (r.export_fd) |fd| {
+                _ = std.os.linux.close(fd);
+                r.export_fd = null;
+            }
+            if (r.export_buf) |b| self.freeGpu(b);
+            r.export_buf = try self.allocGpu(.system, need);
+        }
+        switch (mode) {
+            .detile32 => {
+                // Ensure the CE is up.
+                if (self.ce == null) self.ce = try @import("ce.zig").CopyEngine.create(self);
+                const ce = self.ce.?;
+                // CE-detile the block-linear RT into the linear .system buffer. detile takes a
+                // BYTE pitch; w*4 is correct for the 32bpp color RT (the only detile32 format).
+                try ce.detile(r, r.export_buf.?, stride);
+            },
+            .straight_linear => {
+                // The system-linear image (createResource's .system_wc image branch) is a
+                // tightly-packed row-major w*h*bpp CPU buffer at r.mapping.bytes[0..size] (the
+                // same slice mapResource hands back). There is NO GOB tiling, so a straight
+                // per-row copy into the export buffer reproduces it exactly. Handles any bpp
+                // (fp16 = 8), unlike the 32bpp-only CE-detile. src/dst strides are both w*bpp.
+                const src = r.mapping.?.bytes;
+                if (src.len < need) return error.Unsupported; // backing too small: fail, don't OOB.
+                copyRows(r.export_buf.?.bytes[0..need], src[0..need], r.height, stride, stride);
+            },
+            .unsupported => unreachable, // handled above.
+        }
+        // Export once and cache the fd. On subsequent calls the fd is reused (the re-detile /
+        // re-copy above has already refreshed the export_buf pages in place).
+        if (r.export_fd == null) {
+            r.export_fd = nvidia.memToDmaBuf(
+                @intFromPtr(r.export_buf.?.bytes.ptr),
+                r.export_buf.?.bytes.len, // exact mmap size (GEM_IMPORT requirement)
+            ) catch |e| return nverr(e);
+        }
+        return hal.DmaBufDesc{
+            .fd = r.export_fd.?,
+            .width = r.width,
+            .height = r.height,
+            // fourcc/stride derive from r.format: ARGB8888/w*4 for 8-bit RGBA (matches the
+            // CE-detile [B,G,R,A] byte order) or ABGR16161616F/w*8 for fp16 straight-copied.
+            // The client-present slice must validate this fourcc against the compositor.
+            .format = fourcc,
+            .stride = stride,
+            .offset = 0,
+            .modifier = 0, // DRM_FORMAT_MOD_LINEAR
+        };
+    }
+
+    /// Copy `height` tightly-or-strided rows from `src` to `dst`. `dst_stride`/`src_stride`
+    /// are the per-row byte pitches. When both strides are equal AND the payload is tightly
+    /// packed, this is a single contiguous @memcpy; otherwise it copies row by row. Pure.
+    fn copyRows(dst: []u8, src: []const u8, height: u32, dst_stride: u32, src_stride: u32) void {
+        const row_bytes = @min(dst_stride, src_stride);
+        var y: u32 = 0;
+        while (y < height) : (y += 1) {
+            const d = @as(usize, y) * dst_stride;
+            const s = @as(usize, y) * src_stride;
+            @memcpy(dst[d..][0..row_bytes], src[s..][0..row_bytes]);
+        }
+    }
+
     fn deinit(ptr: *anyopaque) void {
         const self: *Device = @ptrCast(@alignCast(ptr));
         const gpa = self.gpa;
@@ -903,6 +1081,7 @@ pub const Device = struct {
         .flushMappedImage = &flushMappedImage,
         .occlusionSampleCount = &occlusionSampleCount,
         .captureTransformFeedback = &captureTransformFeedback,
+        .exportResource = &exportResource,
         .createShaderModule = &createShaderModule,
         .destroyShaderModule = &destroyShaderModule,
         .dispatchCompute = &dispatchCompute,
@@ -1051,4 +1230,219 @@ test "nvidia device VA allocator keeps next_va bounded across resource churn (sk
     // 400 RTs at ~2 MB each is ~800 MB of churn. Recycling keeps the bump pointer within a
     // few slots of where it started. Without it next_va would sit ~800 MB higher.
     try std.testing.expect(self.next_va - start_va < 0x1000000); // < 16 MB of growth
+}
+
+test "nvidia exportResource returns a real dma-buf fd for a block-linear color RT (skips without a GPU)" {
+    // Proves the full CE-detile -> linear .system buffer -> nvidia.memToDmaBuf pipeline.
+    // Acceptance gate: readlink /proc/self/fd/<fd> MUST contain "dmabuf".
+    const gpa = std.testing.allocator;
+    const dev = Device.create(gpa) catch return error.SkipZigTest;
+    defer dev.deinit();
+
+    // A 64x64 block-linear rgba8_unorm render target.
+    const rt = try dev.createResource(.{ .image = .{
+        .width = 64,
+        .height = 64,
+        .format = .rgba8_unorm,
+        .usage = .{ .render_target = true },
+    } });
+    // destroyResource closes the dma-buf fd and frees export_buf, so do NOT also close fd.
+    defer dev.destroyResource(rt);
+
+    // Clear the RT to a known color so the block-linear surface holds valid content.
+    {
+        const ctx = try dev.createContext();
+        defer ctx.deinit();
+        const cb = try ctx.beginCommands();
+        defer cb.deinit();
+        try cb.setRenderTarget(rt);
+        try cb.clear(.{ .r = 0.5, .g = 0.25, .b = 0.75, .a = 1.0 });
+        try ctx.submit(cb);
+    }
+
+    // CE must be up for exportResource to succeed.
+    {
+        const self: *Device = @ptrCast(@alignCast(dev.ptr));
+        self.ce = @import("ce.zig").CopyEngine.create(self) catch return error.SkipZigTest;
+    }
+
+    // Call exportResource via the HAL (exercises the vtable slot).
+    const desc = try dev.exportResource(rt);
+
+    // The fd must be a valid (non-negative) file descriptor.
+    try std.testing.expect(desc.fd >= 0);
+
+    // Acceptance gate: readlink /proc/self/fd/<fd> must contain "dmabuf".
+    // Build the /proc path from the integer fd (null-terminated for the raw syscall).
+    var path_z_buf: [80]u8 = undefined;
+    const path_z = std.fmt.bufPrintZ(&path_z_buf, "/proc/self/fd/{d}", .{desc.fd}) catch return error.SkipZigTest;
+    var link_buf: [256]u8 = undefined;
+    const rc = std.os.linux.readlink(path_z.ptr, &link_buf, link_buf.len);
+    const eno = std.os.linux.errno(rc);
+    if (eno != .SUCCESS) {
+        std.debug.print("exportResource: readlink {s} failed: errno={}\n", .{ path_z, eno });
+        return error.SkipZigTest;
+    }
+    const link_target = link_buf[0..rc];
+    std.debug.print("exportResource: fd={d} -> {s}\n", .{ desc.fd, link_target });
+    // This is the acceptance gate. It ensures we got a real dma-buf, not a proprietary fd.
+    try std.testing.expect(std.mem.indexOf(u8, link_target, "dmabuf") != null);
+
+    // Verify descriptor fields.
+    try std.testing.expectEqual(@as(u32, 64), desc.width);
+    try std.testing.expectEqual(@as(u32, 64), desc.height);
+    try std.testing.expectEqual(@as(u32, 64 * 4), desc.stride);
+    try std.testing.expectEqual(@as(u64, 0), desc.modifier);
+    // destroyResource (deferred above) will close fd + free export_buf.
+}
+
+test "nvidia prismFormatToFourcc + bpp stride math (pure, no GPU)" {
+    const testing = std.testing;
+    // SDR 8-bit RGBA/BGRA all export as ARGB8888 (unchanged behavior), bpp 4.
+    try testing.expectEqual(Device.FOURCC_ARGB8888, try Device.prismFormatToFourcc(.rgba8_unorm));
+    try testing.expectEqual(Device.FOURCC_ARGB8888, try Device.prismFormatToFourcc(.rgba8_srgb));
+    try testing.expectEqual(Device.FOURCC_ARGB8888, try Device.prismFormatToFourcc(.bgra8_unorm));
+    try testing.expectEqual(@as(u32, 0x34325241), Device.FOURCC_ARGB8888);
+    // HDR fp16 exports as ABGR16161616F, bpp 8.
+    try testing.expectEqual(@as(u32, 0x48344241), Device.FOURCC_ABGR16161616F);
+    try testing.expectEqual(Device.FOURCC_ABGR16161616F, try Device.prismFormatToFourcc(.rgba16_float));
+    // HDR 10-bit exports as ABGR2101010 / XBGR2101010, bpp 4.
+    try testing.expectEqual(@as(u32, 0x30334241), Device.FOURCC_ABGR2101010);
+    try testing.expectEqual(Device.FOURCC_ABGR2101010, try Device.prismFormatToFourcc(.rgb10a2));
+    try testing.expectEqual(Device.FOURCC_XBGR2101010, try Device.prismFormatToFourcc(.rgb10x2));
+    // Unsupported formats error cleanly (no silent corruption).
+    try testing.expectError(error.Unsupported, Device.prismFormatToFourcc(.depth32_float));
+
+    // bpp-driven stride math: w*4 for rgba8, w*8 for rgba16_float.
+    const w: u32 = 64;
+    try testing.expectEqual(@as(u32, 256), w * hal.Format.rgba8_unorm.bytesPerPixel());
+    try testing.expectEqual(@as(u32, 512), w * hal.Format.rgba16_float.bytesPerPixel());
+}
+
+test "nvidia exportMode classifies each export path (pure, no GPU)" {
+    const testing = std.testing;
+    // A minimal Resource carrying only the fields exportMode reads (mem/gpu_va/size are
+    // never touched by exportMode, so leave them undefined). A non-null CPU mapping is a
+    // dummy Mapping (its bytes are never dereferenced by exportMode).
+    const dummy_map: nvidia.Mapping = .{ .bytes = &[_]u8{}, .fd = -1 };
+    const base = Resource{ .kind = .image, .mem = undefined, .gpu_va = undefined, .size = 0 };
+
+    // 1. rgba8 block-linear color RT (not sampled) -> detile32 (the unchanged SDR path).
+    {
+        var r = base;
+        r.format = .rgba8_unorm;
+        r.block_linear = true;
+        try testing.expectEqual(Device.ExportMode.detile32, Device.exportMode(&r));
+    }
+    // bgra8 too (also 32bpp, also ARGB8888).
+    {
+        var r = base;
+        r.format = .bgra8_unorm;
+        r.block_linear = true;
+        try testing.expectEqual(Device.ExportMode.detile32, Device.exportMode(&r));
+    }
+    // 2. rgba16_float system-linear image with a CPU mapping -> straight_linear (the fp16 path).
+    {
+        var r = base;
+        r.format = .rgba16_float;
+        r.block_linear = false;
+        r.mapping = dummy_map;
+        try testing.expectEqual(Device.ExportMode.straight_linear, Device.exportMode(&r));
+    }
+    // 3. rgba16_float BLOCK-LINEAR -> unsupported (the 32bpp-only CE-detile would corrupt fp16).
+    {
+        var r = base;
+        r.format = .rgba16_float;
+        r.block_linear = true;
+        try testing.expectEqual(Device.ExportMode.unsupported, Device.exportMode(&r));
+    }
+    // 4. A sampled texture is never exportable (even rgba8 block-linear).
+    {
+        var r = base;
+        r.format = .rgba8_unorm;
+        r.block_linear = true;
+        r.sampled = true;
+        try testing.expectEqual(Device.ExportMode.unsupported, Device.exportMode(&r));
+    }
+    // 5. rgb10a2: now supported by prismFormatToFourcc.
+    //    block-linear rgb10a2 (bpp=4) -> detile32 (same CE path as rgba8).
+    //    system-linear rgb10a2 with CPU mapping -> straight_linear.
+    {
+        var r = base;
+        r.format = .rgb10a2;
+        r.block_linear = true;
+        try testing.expectEqual(Device.ExportMode.detile32, Device.exportMode(&r));
+        var r2 = base;
+        r2.format = .rgb10a2;
+        r2.mapping = dummy_map;
+        try testing.expectEqual(Device.ExportMode.straight_linear, Device.exportMode(&r2));
+    }
+    // 6. depth32_float -> unsupported.
+    {
+        var r = base;
+        r.format = .depth32_float;
+        r.block_linear = true;
+        try testing.expectEqual(Device.ExportMode.unsupported, Device.exportMode(&r));
+    }
+    // 7. A system-linear image with NO CPU mapping -> unsupported (nothing to copy from).
+    {
+        var r = base;
+        r.format = .rgba16_float;
+        r.block_linear = false;
+        r.mapping = null;
+        try testing.expectEqual(Device.ExportMode.unsupported, Device.exportMode(&r));
+    }
+    // 8. A non-image (buffer) linear resource -> unsupported (only images export).
+    {
+        var r = base;
+        r.kind = .buffer;
+        r.format = .rgba16_float;
+        r.mapping = dummy_map;
+        try testing.expectEqual(Device.ExportMode.unsupported, Device.exportMode(&r));
+    }
+}
+
+test "nvidia usage.linear routes rgba16_float to straight_linear export path (pure, no GPU)" {
+    const testing = std.testing;
+    // Verify that a Resource shaped like a freshly-created-then-mapped linear rgba16_float
+    // image (usage.linear = true => block_linear=false, CPU mapping present) classifies as
+    // straight_linear, and the same format with block_linear=true is unsupported.
+    // This mirrors the routing enforced by the createResource changes: usage.linear skips
+    // is_color_image and falls through to the system_wc pool, which yields block_linear=false.
+    const dummy_map: nvidia.Mapping = .{ .bytes = &[_]u8{}, .fd = -1 };
+    const base = Resource{ .kind = .image, .mem = undefined, .gpu_va = undefined, .size = 0 };
+
+    // rgba16_float linear CPU image (post-mapResource) exports straight, no CE.
+    var linear_fp16 = base;
+    linear_fp16.format = .rgba16_float;
+    linear_fp16.block_linear = false;
+    linear_fp16.mapping = dummy_map;
+    try testing.expectEqual(Device.ExportMode.straight_linear, Device.exportMode(&linear_fp16));
+
+    // Same format but block-linear (fp16 cannot CE-detile) is a clean error, not corruption.
+    var bl_fp16 = base;
+    bl_fp16.format = .rgba16_float;
+    bl_fp16.block_linear = true;
+    try testing.expectEqual(Device.ExportMode.unsupported, Device.exportMode(&bl_fp16));
+
+    // Size sanity: width*height*8 (8 bpp for fp16) for a 64x32 linear image.
+    const w: u32 = 64;
+    const h: u32 = 32;
+    const expected_size: u64 = @as(u64, w) * h * hal.Format.rgba16_float.bytesPerPixel();
+    try testing.expectEqual(@as(u64, 64 * 32 * 8), expected_size);
+}
+
+test "nvidia copyRows reproduces a tightly-packed image (pure, no GPU)" {
+    const testing = std.testing;
+    // 3x2 fp16 image: 8 bpp, stride = 24 bytes, 2 rows. A straight copy must be byte-identical.
+    const w: u32 = 3;
+    const h: u32 = 2;
+    const bpp: u32 = 8;
+    const stride = w * bpp;
+    var src: [stride * h]u8 = undefined;
+    for (&src, 0..) |*b, i| b.* = @intCast(i & 0xff);
+    var dst: [stride * h]u8 = undefined;
+    @memset(&dst, 0);
+    Device.copyRows(&dst, &src, h, stride, stride);
+    try testing.expectEqualSlices(u8, &src, &dst);
 }

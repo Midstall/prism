@@ -425,6 +425,43 @@ pub const Encoder = struct {
         return self.len;
     }
 
+    /// A clear-only pass: bind the render target as a framebuffer and CLEAR it to
+    /// `color`, with no pipeline / vertex buffer / draw. Used by a command buffer
+    /// that only records setRenderTarget + clear (e.g. a compositor clearing a
+    /// scanout target before present). Emits CREATE_OBJECT(SURFACE) +
+    /// SET_FRAMEBUFFER_STATE + CLEAR. Returns the word count.
+    pub const Clear = struct {
+        rt_res: u32,
+        rt_format: u32,
+        color: [4]f32,
+    };
+    pub fn encodeClear(self: *Encoder, d: Clear, h: Handles) usize {
+        self.len = 0;
+        // CREATE a surface over the color target. VIRGL_OBJ_SURFACE_SIZE = 5.
+        self.emitHdr(virgl.CCMD_CREATE_OBJECT, virgl.OBJ_SURFACE, 5);
+        self.emit(h.surface);
+        self.emit(d.rt_res);
+        self.emit(d.rt_format);
+        self.emit(0); // level
+        self.emit(0); // layers
+        // SET_FRAMEBUFFER_STATE: nr_cbufs=1, no zsurf, the color surface.
+        self.emitHdr(virgl.CCMD_SET_FRAMEBUFFER_STATE, 0, 3);
+        self.emit(1); // nr_cbufs
+        self.emit(0); // zsurf
+        self.emit(h.surface); // color target 0
+        // CLEAR color. VIRGL_OBJ_CLEAR_SIZE = 8.
+        self.emitHdr(virgl.CCMD_CLEAR, 0, 8);
+        self.emit(virgl.CLEAR_COLOR0);
+        self.emitF(d.color[0]);
+        self.emitF(d.color[1]);
+        self.emitF(d.color[2]);
+        self.emitF(d.color[3]);
+        self.emit(0); // depth lo
+        self.emit(0); // depth hi
+        self.emit(0); // stencil
+        return self.len;
+    }
+
     /// One MSAA resolve, lowered to a virgl BLIT: the multisampled color resource
     /// `src` is resolved into the single-sample `dst` (both `width`x`height`, the
     /// same `format`). virglrenderer performs the sample average when the source

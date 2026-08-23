@@ -300,14 +300,15 @@ test "apple Device vtable is complete (every method bound, no null)" {
     // Required methods are non-optional `*const fn` pointers, so the type itself
     // guarantees no method is null. Assert each required one points at a real address
     // and that the count matches the HAL contract so a missing binding would not compile.
-    // Four optional methods (`?*const fn`, default null) the apple driver does not provide
+    // Five optional methods (`?*const fn`, default null) the apple driver does not provide
     // are skipped by the loop:
     // readbackPresent (present fast-path, apple falls back to mapResource),
     // captureTransformFeedback (transform-feedback capture, software-only path),
     // finalizeDepthTexture (tiled render-depth to sampled ZF32 bridge, nvidia-only),
-    // flushMappedImage (re-swizzle a mapped scratch back to a tiled surface, nvidia-only).
+    // flushMappedImage (re-swizzle a mapped scratch back to a tiled surface, nvidia-only),
+    // exportResource (dma-buf export for Wayland present, nvidia-only for now).
     const fields = std.meta.fields(hal.Device.VTable);
-    try std.testing.expectEqual(@as(usize, 19), fields.len);
+    try std.testing.expectEqual(@as(usize, 20), fields.len);
     inline for (fields) |f| {
         const is_optional = switch (@typeInfo(f.type)) {
             .optional => true,

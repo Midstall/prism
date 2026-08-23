@@ -1,3 +1,4 @@
+const std = @import("std");
 const nvidia = @import("nvidia");
 const hal = @import("../../hal.zig");
 
@@ -75,6 +76,13 @@ pub const Resource = struct {
     /// to the shaders), and a resolve box-downsamples the block back to a single sample.
     /// `width`/`height` stay the logical (resolved) dimensions.
     samples: u8 = 1,
+    /// Linear .system mirror of the block-linear RT for exportResource (CE-detiled into
+    /// this buffer, then exported via nvidia.memToDmaBuf). Freed in destroyResource.
+    export_buf: ?@import("device.zig").Device.GpuBuf = null,
+    /// Cached dma-buf fd for exportResource. Created once from export_buf, reused on
+    /// subsequent calls (the CE re-detile above refreshes the pages in place).
+    /// Freed (closed) in destroyResource.
+    export_fd: ?std.posix.fd_t = null,
 };
 
 /// Supersample scale (x, y) for a HAL MSAA sample count: 4 -> 2x2, 2 -> 2x1, else 1x1.

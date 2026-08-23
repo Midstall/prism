@@ -304,6 +304,14 @@ pub const Context = struct {
     // TEX handle. Built per-submit from the bound textures.
     tic_pool: NvDevice.GpuBuf,
     tsc_pool: NvDevice.GpuBuf,
+    // Next free TIC/TSC pool slot for THIS command buffer. Reset to 1 (slot 0 is the
+    // null descriptor) at beginCommands, then handed out one-per-texture-bind by
+    // emitDrawState. Keying the slot by binding index instead collides when two
+    // different textures share a binding within one submit (e.g. the glyph atlas and
+    // an image both at sampler binding 2): the second CPU-written TIC clobbers the
+    // first, and since the pool is read at GPU-execution time the earlier draw samples
+    // the wrong texture. A monotonic per-CB slot keeps every bound texture distinct.
+    tic_next: u32 = 1,
     queue: nvidia.Queue,
     // CPU mapping of the USERMODE doorbell page. The doorbell lives in a limited
     // hardware aperture. Unmapped in deinit. Leaking it exhausts the aperture and
@@ -471,6 +479,8 @@ pub const Context = struct {
         // Reset here too (deinit already reset it). Belt-and-suspenders if a caller skipped deinit.
         cb.freeSnapshots();
         cb.cmds.clearRetainingCapacity();
+        // Fresh command buffer: hand out TIC/TSC pool slots from 1 again (0 = null).
+        self.tic_next = 1;
         self.cb_busy = true;
         return .{ .ptr = cb, .vtable = &CommandBuffer.vtable };
     }
@@ -556,7 +566,16 @@ pub const Context = struct {
             const idx: u32 = @intCast(binding);
             const img = tb.image;
             self.uploadTexture(img);
-            const desc_idx: u32 = idx + 1;
+            // Hand out a UNIQUE pool slot per bound texture in this command buffer, rather
+            // than keying by the binding index. Two textures sharing a binding across draws
+            // in one submit (glyph atlas + image, both at sampler binding 2) would otherwise
+            // write the SAME slot; the second CPU write clobbers the first, and the pool is
+            // read at GPU-execution time, so the earlier draw samples the later texture.
+            // The bindless handle (loaded into CB0 at the binding's offset, in-stream and
+            // thus correctly ordered per draw) points at this unique slot. Slot 0 is null;
+            // clamp at the 128-entry pool capacity (frames use only a few textures).
+            const desc_idx: u32 = self.tic_next;
+            if (self.tic_next < 127) self.tic_next += 1;
             if (desc_idx > max_tex_idx) max_tex_idx = desc_idx;
             const max_mip: u32 = if (img.mip_levels > 1) img.mip_levels - 1 else 0;
             // A cubemap is bound as a 6-face-wide 2D atlas (faces side by side, width = 6*face_w). The

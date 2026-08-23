@@ -216,6 +216,21 @@ fn mockAvailable(ptr: *anyopaque) bool {
     return true;
 }
 
+test "exportResource returns Unsupported when vtable slot is null" {
+    const gpa = std.testing.allocator;
+    var state: u8 = 0;
+    const vt = drv.Driver.VTable{ .isAvailable = &mockAvailable, .createDevice = &mockCreateDevice };
+    const driver = drv.Driver{ .name = "mock", .ptr = &state, .vtable = &vt };
+
+    const device = try driver.createDevice(gpa);
+    defer device.deinit();
+
+    const resource = try device.createResource(.{ .image = .{ .width = 4, .height = 4, .format = .rgba8_unorm, .usage = .{ .render_target = true, .scanout = true } } });
+    defer device.destroyResource(resource);
+
+    try std.testing.expectError(error.Unsupported, device.exportResource(resource));
+}
+
 test "mock driver drives the full HAL chain end to end" {
     const gpa = std.testing.allocator;
     var state: u8 = 0;

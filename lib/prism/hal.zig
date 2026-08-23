@@ -94,6 +94,27 @@ pub const ResourceUsage = packed struct {
     /// a GEM BO regardless of usage, so this is mainly semantic (a driver that
     /// distinguishes storage vs vertex/uniform allocations keys off it).
     storage: bool = false,
+    /// Resource may be exported as a dma-buf for scanout/sharing.
+    scanout: bool = false,
+    /// Create the image as a system-linear, CPU-mapped resource (row-major,
+    /// tightly-packed width*height*bytesPerPixel) instead of a GOB-tiled
+    /// block-linear surface. Used for a CPU-filled image that will be
+    /// dma-buf exported straight (no CE detile). Ignored for buffers.
+    linear: bool = false,
+};
+
+/// A dma-buf export of a rendered resource. `fd` is owned by the exporting
+/// Resource (valid until destroyResource); the consumer must not close it or
+/// use it after the Resource is destroyed. Single-plane, `modifier` is a DRM
+/// format modifier (LINEAR = 0). `format` is a DRM fourcc.
+pub const DmaBufDesc = struct {
+    fd: std.posix.fd_t,
+    width: u32,
+    height: u32,
+    format: u32, // DRM fourcc
+    stride: u32,
+    offset: u32,
+    modifier: u64,
 };
 
 pub const ResourceKind = enum { buffer, image };
@@ -784,6 +805,11 @@ pub const Device = struct {
         /// into the tiled GPU surface. Null = mapResource returns the real backing (software), so
         /// CPU writes already persist and no flush is needed. flushMappedImage() then no-ops.
         flushMappedImage: ?*const fn (ptr: *anyopaque, resource: *Resource) void = null,
+        /// Optional: export a rendered color resource as a Linux dma-buf fd (for
+        /// zero(ish)-copy Wayland present). Null = the driver cannot export; the caller
+        /// falls back to the mapResource/readbackPresent + wl_shm path. The returned
+        /// fd + its backing are owned by the Resource until destroyResource.
+        exportResource: ?*const fn (ptr: *anyopaque, resource: *Resource) Error!DmaBufDesc = null,
         createShaderModule: *const fn (ptr: *anyopaque, desc: ShaderModuleDesc) Error!*ShaderModule,
         destroyShaderModule: *const fn (ptr: *anyopaque, module: *ShaderModule) void,
         dispatchCompute: *const fn (ptr: *anyopaque, d: ComputeDispatch) Error!void,
@@ -816,6 +842,12 @@ pub const Device = struct {
     /// on drivers whose mapResource returns the real backing (software). CPU writes already persist.
     pub fn flushMappedImage(self: Device, resource: *Resource) void {
         if (self.vtable.flushMappedImage) |f| f(self.ptr, resource);
+    }
+    /// Export a rendered color resource as a Linux dma-buf fd. Returns error.Unsupported if
+    /// the driver does not implement exportResource (vtable slot is null).
+    pub fn exportResource(self: Device, resource: *Resource) Error!DmaBufDesc {
+        const f = self.vtable.exportResource orelse return Error.Unsupported;
+        return f(self.ptr, resource);
     }
     /// Build a sampled depth texture from a rendered depth surface (see the vtable field). The
     /// caller must first confirm `vtable.finalizeDepthTexture != null` (drivers without a

@@ -86,6 +86,7 @@ fn mapErr(e: transport_mod.Error) hal.Error {
         error.OutOfMemory => error.OutOfMemory,
         error.InitializationFailed => error.InitializationFailed,
         error.DeviceLost => error.DeviceLost,
+        error.Unsupported => error.Unsupported,
     };
 }
 
@@ -256,6 +257,23 @@ pub const Context = struct {
         // This is the EndRenderPass resolve the GLES/ICD layer issues on its own.
         if (c.pipeline == null and c.resolve_req != null) {
             try self.emitResolve(dev, c.resolve_req.?);
+            return;
+        }
+
+        // A clear-only command buffer (render target bound, but no pipeline / vertex
+        // buffer / draw and no resolve): emit just the framebuffer bind + CLEAR. The
+        // draw path below requires a pipeline + vertex buffer, which a bare clear
+        // (e.g. a compositor clearing a scanout target) does not have.
+        if (c.pipeline == null and c.rt != null) {
+            const rtc = Device.resourceOf(c.rt.?);
+            var clear_enc = stream_mod.Encoder.init(dev.stream[0..]);
+            const cwords = clear_enc.encodeClear(.{
+                .rt_res = rtc.t.res_id,
+                .rt_format = formats.virglColorFormat(rtc.format),
+                .color = .{ c.clear_color.r, c.clear_color.g, c.clear_color.b, c.clear_color.a },
+            }, .{});
+            const cbytes: [*]const u8 = @ptrCast(&dev.stream);
+            dev.transport.submit(cbytes[0 .. cwords * 4]) catch |e| return mapErr(e);
             return;
         }
 

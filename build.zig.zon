@@ -9,8 +9,8 @@
             .hash = "xml-0.2.0-ZTbP3yI6AgB9Rpd2hQrueO63ib0Bm6mQiL_WB1t7JAmP",
         },
         .wayland = .{
-            .url = "git+https://github.com/Midstall/wayland.zig#9e8fa27820f78657ab1dd61dc4cc8422382f9ab8",
-            .hash = "wayland-0.1.0-J5KKzwuPBgCzl1O4XlyUKHRInbmJFZP0PhEi44jzC-i3",
+            .url = "git+https://github.com/Midstall/wayland.zig#2da04998e43fa3482ac89d1308ff169aab459943",
+            .hash = "wayland-0.1.0-J5KKz62TBgBeaRaECyAJ1fjUz0eZ-KPZ6Fu3XDI4Zan1",
         },
         .asahi = .{
             .path = "subproject/asahi",
@@ -19,17 +19,17 @@
             .url = "git+https://github.com/Midstall/vulcan#c577510a85951f91a418f42a8a26edb0e15d168e",
             .hash = "vulcan-0.0.0-d6EfZDK4LwAP0Ljz4_G2OdOOLlqlRity86wO2sev7SIT",
         },
-        .nvidia = .{
-            .url = "git+https://github.com/Midstall/nvidia.zig#57f904fa38ae1de29978d8a104f94454477505a0",
-            .hash = "nvidia-0.1.0-nX_093w3CADWP_iI25knrTBFRaqIPZw-73VTyMrZZuDN",
-        },
         .drm = .{
-            .url = "git+https://github.com/Midstall/drm.zig#197beb1a71876473c436b613ba9b2aac972b8675",
-            .hash = "drm-0.1.0-ObSCT54wAQAIqad-yynaTqZnuq1hxNByQjSkkB0Y4spt",
+            .url = "git+https://github.com/Midstall/drm.zig#25adace9df06b8b859ee52cc0832bcc4c2223c3a",
+            .hash = "drm-0.1.0-ObSCTywHAQAeCZ7R4ZAVRLD63FEkmWIQfOhnfwQwoiBF",
         },
         .gbm = .{
             .url = "git+https://github.com/Midstall/gbm.zig#e60addcbe3a9f4d25cf55e7209fc83759f142e64",
             .hash = "gbm-0.1.0-B1lS4vCJAAAOTrOGeP7z5lKpGktmdlLcDKtd9IKcbTDD",
+        },
+        .nvidia = .{
+            .url = "git+https://github.com/Midstall/nvidia.zig#4d0078259dcf6770433e3b42603736b3b70b1006",
+            .hash = "nvidia-0.1.0-nX_09wxuCAAqlGIxDi4j9Z4dNIJzD6AimJvGbaEKyzB-",
         },
     },
     .paths = .{

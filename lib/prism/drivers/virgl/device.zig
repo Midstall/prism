@@ -248,6 +248,7 @@ pub const Device = struct {
         bytes: []u8,
         width: u32,
         height: u32,
+        stride: u32,
     };
 
     /// Create a scanout-able render target on the transport's (shared card0) fd and
@@ -276,6 +277,7 @@ pub const Device = struct {
             .bytes = sr.bytes,
             .width = width,
             .height = height,
+            .stride = sr.stride,
         };
     }
 
@@ -293,6 +295,7 @@ fn mapErr(e: transport_mod.Error) hal.Error {
         error.OutOfMemory => error.OutOfMemory,
         error.InitializationFailed => error.InitializationFailed,
         error.DeviceLost => error.DeviceLost,
+        error.Unsupported => error.Unsupported,
     };
 }
 

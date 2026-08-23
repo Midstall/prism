@@ -10,7 +10,8 @@ pub const Box = extern struct { x: u32, y: u32, z: u32, w: u32, h: u32, d: u32 }
 
 /// Transport errors. InitializationFailed = a setup op failed (open/context/resource create).
 /// DeviceLost = a submit/transfer failed on a reachable device.
-pub const Error = error{ InitializationFailed, DeviceLost, OutOfMemory };
+/// Unsupported = operation not supported for the given parameters (e.g. non-4-byte scanout format).
+pub const Error = error{ InitializationFailed, DeviceLost, OutOfMemory, Unsupported };
 
 /// A virgl 3D resource as the transport tracks it: a host resource id plus the
 /// guest backing the CPU reads/writes. Freestanding: caller-allocated DMA-coherent
@@ -45,6 +46,10 @@ pub const enc = struct {
     pub const FORMAT_R32G32_FLOAT: u32 = 29;
     pub const FORMAT_R32G32B32A32_FLOAT: u32 = 31;
     pub const FORMAT_R8G8B8A8_UNORM: u32 = 67;
+    // HDR / 10-bit formats (VIRGL_FORMAT_* ordinals, virgl_hw.h).
+    pub const FORMAT_R16G16B16A16_FLOAT: u32 = 94;
+    pub const FORMAT_R10G10B10A2_UNORM: u32 = 8;
+    pub const FORMAT_B10G10R10X2_UNORM: u32 = 233;
     pub const BIND_DEPTH_STENCIL: u32 = 1 << 0;
     pub const BIND_RENDER_TARGET: u32 = 1 << 1;
     pub const BIND_SAMPLER_VIEW: u32 = 1 << 3;

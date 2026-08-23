@@ -155,7 +155,23 @@ pub const ScanoutResource = struct {
     bytes: []u8,
     width: u32,
     height: u32,
+    stride: u32,
 };
+
+/// Return the bytes-per-pixel for a virgl format ordinal on the scanout path.
+/// Virtio-gpu scanout is 4-byte-only; fp16 (R16G16B16A16_FLOAT = 94) is 8 bpp
+/// and cannot scan out. All recognised 4-byte scanout formats return 4; fp16
+/// returns 8 so the caller can gate on bpp != 4. Unknown formats default to 4.
+fn scanoutBpp(virgl_format: u32) u32 {
+    return switch (virgl_format) {
+        enc.FORMAT_B8G8R8X8_UNORM => 4,
+        enc.FORMAT_B8G8R8A8_UNORM => 4,
+        enc.FORMAT_R10G10B10A2_UNORM => 4,
+        enc.FORMAT_B10G10R10X2_UNORM => 4,
+        enc.FORMAT_R16G16B16A16_FLOAT => 8,
+        else => 4,
+    };
+}
 
 pub const Transport = struct {
     gpa: std.mem.Allocator,
@@ -200,8 +216,10 @@ pub const Transport = struct {
     /// display owner can ADDFB2 the bo as a KMS framebuffer and hand the resource
     /// back as the virgl render target. The bo is tracked for EXECBUFFER pinning.
     pub fn createScanoutResource(self: *Transport, width: u32, height: u32, format: u32) Error!ScanoutResource {
+        const bpp = scanoutBpp(format);
+        if (bpp != 4) return error.Unsupported;
         try self.ensureContext();
-        const size: usize = @as(usize, width) * @as(usize, height) * 4;
+        const size: usize = @as(usize, width) * @as(usize, height) * @as(usize, bpp);
         var rc = drm_virtgpu_resource_create{
             .target = enc.TEXTURE_2D,
             .format = format,
@@ -216,7 +234,7 @@ pub const Transport = struct {
             .bo_handle = 0,
             .res_handle = 0,
             .size = @intCast(size),
-            .stride = width * 4,
+            .stride = width * bpp,
         };
         try self.ioctlInit(DRM_IOCTL_VIRTGPU_RESOURCE_CREATE, @intFromPtr(&rc));
         const bytes = try self.mapBo(rc.bo_handle, size);
@@ -228,6 +246,7 @@ pub const Transport = struct {
             .bytes = bytes,
             .width = width,
             .height = height,
+            .stride = width * bpp,
         };
     }
 
@@ -457,3 +476,9 @@ pub const Transport = struct {
         _ = res;
     }
 };
+
+test "scanoutBpp: 4-byte scanout formats -> 4, fp16 -> 8" {
+    try std.testing.expectEqual(@as(u32, 4), scanoutBpp(enc.FORMAT_B8G8R8X8_UNORM));
+    try std.testing.expectEqual(@as(u32, 4), scanoutBpp(enc.FORMAT_R10G10B10A2_UNORM));
+    try std.testing.expectEqual(@as(u32, 8), scanoutBpp(enc.FORMAT_R16G16B16A16_FLOAT));
+}
