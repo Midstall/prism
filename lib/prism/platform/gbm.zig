@@ -18,6 +18,9 @@ fn halErr(e: gbm.backend.Error) hal.Error {
     return switch (e) {
         error.OutOfMemory => error.OutOfMemory,
         error.Unsupported, error.InvalidArgument => error.InvalidArgument,
+        // A failed dmabuf export at present time is a runtime device failure,
+        // the same class the Wayland platform reports as DeviceLost.
+        error.ExportFailed => error.DeviceLost,
     };
 }
 

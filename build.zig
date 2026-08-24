@@ -69,14 +69,19 @@ pub fn build(b: *std.Build) void {
 
     // The GLX vendor, EGL/GLVND vendor, and Vulkan ICD shared libraries.
     if (!target.result.cpu.arch.isWasm() and target.result.os.tag != .uefi) {
-        const Frontend = struct { name: []const u8, root: []const u8 };
+        // The EGL vendor and the Vulkan ICD present over Wayland and link the
+        // system libwayland-client, which exists only on Linux. The GLX vendor
+        // speaks X11 and needs no wayland, so it keeps the wider gate. The CI's
+        // aarch64-darwin check builds `zig build install`, and these two cannot
+        // exist there at all.
+        const wayland_hosts = target.result.os.tag == .linux;
+        const Frontend = struct { name: []const u8, root: []const u8, wayland: bool };
         for ([_]Frontend{
-            .{ .name = "GLX_prism", .root = "lib/prism-gl.zig" },
-            .{ .name = "EGL_prism", .root = "lib/prism-egl.zig" },
-            .{ .name = "prism-vk", .root = "lib/prism-vk.zig" },
+            .{ .name = "GLX_prism", .root = "lib/prism-gl.zig", .wayland = false },
+            .{ .name = "EGL_prism", .root = "lib/prism-egl.zig", .wayland = true },
+            .{ .name = "prism-vk", .root = "lib/prism-vk.zig", .wayland = true },
         }) |fe| {
-            const is_vk = std.mem.eql(u8, fe.name, "prism-vk");
-            const is_egl = std.mem.eql(u8, fe.name, "EGL_prism");
+            if (fe.wayland and !wayland_hosts) continue;
             // The ICD's wsi_wayland.zig and the EGL vendor's wl_egl_window.zig both use
             // wayland.shm for the wl_shm present pool, so both need Prism's Zig wayland
             // library directly.
@@ -91,9 +96,9 @@ pub fn build(b: *std.Build) void {
                 .root_source_file = b.path(fe.root),
                 .target = target,
                 .optimize = optimize,
-                .imports = if (is_vk or is_egl) &wl_imports else &base_imports,
+                .imports = if (fe.wayland) &wl_imports else &base_imports,
             });
-            if (is_vk or is_egl) {
+            if (fe.wayland) {
                 // The libwayland present path links libwayland-client (the wl_* C API),
                 // bound at runtime to the host app's already-loaded copy.
                 fmod.link_libc = true;
@@ -104,40 +109,49 @@ pub fn build(b: *std.Build) void {
         }
     }
 
-    // prism-info CLI.
-    const info_mod = b.createModule(.{
-        .root_source_file = b.path("tools/prism-info.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{.{ .name = "prism", .module = prism }},
-    });
-    const info_exe = b.addExecutable(.{ .name = "prism-info", .root_module = info_mod });
-    b.installArtifact(info_exe);
-    b.step("run-info", "Run prism-info").dependOn(&b.addRunArtifact(info_exe).step);
-    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = info_mod })).step);
+    // prism-info probes hardware through the platform backends, and the Wayland
+    // one pulls the wayland client's Linux-only syscall layer into analysis on
+    // darwin. The tool has no darwin consumer: lattice uses the prism module.
+    if (target.result.os.tag == .linux) {
+        const info_mod = b.createModule(.{
+            .root_source_file = b.path("tools/prism-info.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "prism", .module = prism }},
+        });
+        const info_exe = b.addExecutable(.{ .name = "prism-info", .root_module = info_mod });
+        b.installArtifact(info_exe);
+        b.step("run-info", "Run prism-info").dependOn(&b.addRunArtifact(info_exe).step);
+        test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = info_mod })).step);
+    }
 
     // Triangle example: best available driver with a software fallback, presented
-    // over Wayland.
-    const triangle_mod = b.createModule(.{
-        .root_source_file = b.path("examples/triangle.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{.{ .name = "prism", .module = prism }},
-    });
-    const triangle_exe = b.addExecutable(.{ .name = "triangle", .root_module = triangle_mod });
-    b.installArtifact(triangle_exe);
-    b.step("run-triangle", "Run the triangle on Wayland (needs a compositor)").dependOn(&b.addRunArtifact(triangle_exe).step);
+    // over Wayland. Wayland presentation is Linux-only, so the example is too.
+    if (target.result.os.tag == .linux) {
+        const triangle_mod = b.createModule(.{
+            .root_source_file = b.path("examples/triangle.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "prism", .module = prism }},
+        });
+        const triangle_exe = b.addExecutable(.{ .name = "triangle", .root_module = triangle_mod });
+        b.installArtifact(triangle_exe);
+        b.step("run-triangle", "Run the triangle on Wayland (needs a compositor)").dependOn(&b.addRunArtifact(triangle_exe).step);
+    }
 
     // Render the loader/vendor JSON templates, replacing @LIBDIR@ with the install lib dir.
-    const libdir = b.getInstallPath(.lib, "");
-    inline for (.{
-        .{ "data/vulkan/icd.d/prism.json.in", "share/vulkan/icd.d/prism.json" },
-        .{ "data/glvnd/egl_vendor.d/50_prism.json.in", "share/glvnd/egl_vendor.d/50_prism.json" },
-    }) |pair| {
-        const tmpl = b.build_root.handle.readFileAlloc(b.graph.io, pair[0], b.allocator, .limited(1 << 16)) catch @panic("read template");
-        const rendered = std.mem.replaceOwned(u8, b.allocator, tmpl, "@LIBDIR@", libdir) catch @panic("OOM");
-        const wf = b.addWriteFiles();
-        const out = wf.add(std.fs.path.basename(pair[1]), rendered);
-        b.getInstallStep().dependOn(&b.addInstallFile(out, pair[1]).step);
+    // They describe the Vulkan ICD and the EGL vendor library, both Linux-only.
+    if (target.result.os.tag == .linux) {
+        const libdir = b.getInstallPath(.lib, "");
+        inline for (.{
+            .{ "data/vulkan/icd.d/prism.json.in", "share/vulkan/icd.d/prism.json" },
+            .{ "data/glvnd/egl_vendor.d/50_prism.json.in", "share/glvnd/egl_vendor.d/50_prism.json" },
+        }) |pair| {
+            const tmpl = b.build_root.handle.readFileAlloc(b.graph.io, pair[0], b.allocator, .limited(1 << 16)) catch @panic("read template");
+            const rendered = std.mem.replaceOwned(u8, b.allocator, tmpl, "@LIBDIR@", libdir) catch @panic("OOM");
+            const wf = b.addWriteFiles();
+            const out = wf.add(std.fs.path.basename(pair[1]), rendered);
+            b.getInstallStep().dependOn(&b.addInstallFile(out, pair[1]).step);
+        }
     }
 }

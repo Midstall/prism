@@ -24,8 +24,8 @@
             .hash = "drm-0.1.0-ObSCTywHAQAeCZ7R4ZAVRLD63FEkmWIQfOhnfwQwoiBF",
         },
         .gbm = .{
-            .url = "git+https://github.com/Midstall/gbm.zig#e60addcbe3a9f4d25cf55e7209fc83759f142e64",
-            .hash = "gbm-0.1.0-B1lS4vCJAAAOTrOGeP7z5lKpGktmdlLcDKtd9IKcbTDD",
+            .url = "git+https://github.com/Midstall/gbm.zig#8dce1f3fac39bc24d46216eb02b4ba2d1deb2837",
+            .hash = "gbm-0.1.0-B1lS4rKjAABp1g2qsZCSuyIEVf3p0lGMeQdrdronra3s",
         },
         .nvidia = .{
             .url = "git+https://github.com/Midstall/nvidia.zig#4d0078259dcf6770433e3b42603736b3b70b1006",
