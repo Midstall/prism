@@ -11,6 +11,9 @@ var state: State = .{};
 
 fn available(ptr: *anyopaque) bool {
     _ = ptr;
+    // The nvidia control device exists only on Linux. Same guard as the apple
+    // and virgl drivers: probing from a darwin build dies with SIGSYS.
+    if (@import("builtin").os.tag != .linux) return false;
     // Probe for a usable NVIDIA GPU: open the control device and run the RM
     // version handshake. If that succeeds, the from-scratch driver can drive it.
     var client = nvidia.Client.open() catch return false;

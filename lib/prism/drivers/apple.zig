@@ -11,6 +11,11 @@ var state: State = .{};
 
 fn available(ptr: *anyopaque) bool {
     _ = ptr;
+    // The asahi DRM driver exists only on Linux. Probing it from a darwin build
+    // runs Linux syscall numbers on the macOS kernel and the process dies with
+    // SIGSYS. drivers.zig gates this driver out off Linux, and this guard keeps
+    // an explicit -Ddrivers=apple build on darwin from crashing the same way.
+    if (@import("builtin").os.tag != .linux) return false;
     // Probe for a usable Apple Silicon (AGX) GPU: open the kernel `asahi` DRM
     // render node. If that succeeds, the from-scratch driver can drive it. On a
     // box without an AGX GPU (the aarch64 dev box) open() returns NoDevice and

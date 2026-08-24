@@ -9,10 +9,17 @@ pub const software = @import("drivers/software.zig");
 /// Compiled-in drivers, selected at build time via -Ddrivers (build_options flags).
 /// An unselected driver's source is in a comptime-dead branch and never analyzed.
 fn buildAll() []const Driver {
+    // The apple, nvidia and virgl probes issue raw Linux syscalls (DRM render
+    // nodes, the nvidia control device). On a darwin build those run a Linux
+    // syscall number on the macOS kernel and the process dies with SIGSYS,
+    // which is what the aarch64-darwin CI hit in the headless-backend tests.
+    // The OS gate keeps that code comptime-dead off Linux: not analyzed, not
+    // probed, and the software rasterizer is the universal fallback.
+    const on_linux = builtin.os.tag == .linux;
     const sw_list: []const Driver = if (build_options.driver_software) &[_]Driver{@import("drivers/software.zig").driver} else &.{};
-    const ap_list: []const Driver = if (build_options.driver_apple and builtin.cpu.arch == .aarch64) &[_]Driver{@import("drivers/apple.zig").driver} else &.{};
-    const nv_list: []const Driver = if (build_options.driver_nvidia) &[_]Driver{@import("drivers/nvidia.zig").driver} else &.{};
-    const vg_list: []const Driver = if (build_options.driver_virgl) &[_]Driver{@import("drivers/virgl.zig").driver} else &.{};
+    const ap_list: []const Driver = if (build_options.driver_apple and on_linux and builtin.cpu.arch == .aarch64) &[_]Driver{@import("drivers/apple.zig").driver} else &.{};
+    const nv_list: []const Driver = if (build_options.driver_nvidia and on_linux) &[_]Driver{@import("drivers/nvidia.zig").driver} else &.{};
+    const vg_list: []const Driver = if (build_options.driver_virgl and on_linux) &[_]Driver{@import("drivers/virgl.zig").driver} else &.{};
     // Auto-selection preference order: real hardware drivers first, the software
     // rasterizer last as the universal fallback.
     return ap_list ++ nv_list ++ vg_list ++ sw_list;
@@ -77,6 +84,16 @@ test "createBestDevice brings up a usable device (hardware if present, else soft
     // It must be genuinely usable, not just selected.
     const r = try sel.device.createResource(.{ .buffer = .{ .size = 16 } });
     sel.device.destroyResource(r);
+}
+
+test "hardware probes are compiled in only on Linux" {
+    // The apple, nvidia and virgl probes issue raw Linux syscalls. Off Linux
+    // they must not exist in the list at all: a probe there dies with SIGSYS
+    // before the walk ever reaches the software fallback. This runs green
+    // everywhere and would have caught the aarch64-darwin CI crash.
+    if (builtin.os.tag != .linux) {
+        for (all) |d| try std.testing.expectEqualStrings("software", d.name);
+    }
 }
 
 test "selectForDrmDevice matches the first render node to a driver (skips otherwise)" {
