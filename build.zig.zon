@@ -16,8 +16,8 @@
             .path = "subproject/asahi",
         },
         .vulcan = .{
-            .url = "git+https://github.com/Midstall/vulcan#10e6493b982c334a276e2f6c0442b1bfbef0cdfe",
-            .hash = "vulcan-0.0.0-d6EfZMyvggBbwcCWIuuyDdlZy_F-5nhbACIW_bkLkMwh",
+            .url = "git+https://github.com/Midstall/vulcan#b62217f98e3ebb984f8ea8a0d99f9c4680a7e0b6",
+            .hash = "vulcan-0.0.0-d6EfZI6fhACrKe1LU2YYf8cQfTldOGoooYQVxvFkWq7s",
         },
         .drm = .{
             .url = "git+https://github.com/Midstall/drm.zig#25adace9df06b8b859ee52cc0832bcc4c2223c3a",
