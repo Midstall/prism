@@ -58,11 +58,17 @@
         { pkgs, ... }:
         {
           default = pkgs.mkShell {
-            packages = with pkgs; [
-              zig
-              pkg-config
-              wayland
-            ];
+            packages =
+              with pkgs;
+              (
+                [
+                  zig
+                ]
+                ++ lib.optionals (stdenv.hostPlatform.isLinux) [
+                  pkg-config
+                  wayland
+                ]
+              );
           };
         }
       );
@@ -83,14 +89,14 @@
               hash = "sha256-Zcnbxtarbp7VxcMTs8+oz0/XPB3lDkAy+c9/W01GRio=";
             };
 
-            nativeBuildInputs = with pkgs; [
-              zig
-              pkg-config
-            ];
+            nativeBuildInputs =
+              with pkgs;
+              [
+                zig
+              ]
+              ++ lib.optional (pkgs.stdenv.hostPlatform.isLinux) pkg-config;
 
-            buildInputs = with pkgs; [
-              wayland
-            ];
+            buildInputs = with pkgs; (lib.optional (pkgs.stdenv.hostPlatform.isLinux) wayland);
 
             postConfigure = ''
               ln -s ${finalAttrs.zigDeps} "$ZIG_GLOBAL_CACHE_DIR/p"
