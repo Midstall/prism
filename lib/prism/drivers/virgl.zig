@@ -59,10 +59,7 @@ pub fn deviceOf(dev: hal.Device) *DeviceImpl {
 /// The scanout descriptor returned by the zero-copy path (re-exported).
 pub const Scanout = DeviceImpl.Scanout;
 
-// Registry Driver wrapper: adapts createDevice(gpa, InitArgs) to the Driver vtable shape
-// so virgl shows up in prism.drivers.all. Freestanding callers use createDevice directly.
-// The registry does not apply there (no /dev/dri + /sys on freestanding).
-const on_linux = builtin.target.os.tag != .freestanding;
+const on_linux = builtin.target.os.tag == .linux;
 
 const State = struct {};
 var state: State = .{};
