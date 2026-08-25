@@ -9,8 +9,8 @@
             .hash = "xml-0.2.0-ZTbP3yI6AgB9Rpd2hQrueO63ib0Bm6mQiL_WB1t7JAmP",
         },
         .wayland = .{
-            .url = "git+https://github.com/Midstall/wayland.zig#2da04998e43fa3482ac89d1308ff169aab459943",
-            .hash = "wayland-0.1.0-J5KKz62TBgBeaRaECyAJ1fjUz0eZ-KPZ6Fu3XDI4Zan1",
+            .url = "git+https://github.com/Midstall/wayland.zig#ddd5f5829471e4ba2b5658895132d062db9dbed6",
+            .hash = "wayland-0.1.0-J5KKz0mUBgAKmNFDAKjmiUvbnDiAUpGTyLKQuidMkc_E",
         },
         .asahi = .{
             .path = "subproject/asahi",
