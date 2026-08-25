@@ -1,4 +1,5 @@
 const std = @import("std");
+const gpumem = @import("gpumem.zig");
 const nvidia = @import("nvidia");
 const hal = @import("../../hal.zig");
 const NvDevice = @import("device.zig").Device;
@@ -190,10 +191,13 @@ pub const Pipeline = struct {
         const heap = try dev.allocGpu(.system_wc, heap_size);
         errdefer dev.freeGpu(heap);
         const h = heap.bytes;
-        @memcpy(h[VS_SPH_OFF..][0 .. vs_sph.data.len * 4], vs_sph.bytes());
-        @memcpy(h[VS_CODE_OFF..][0..vs.code.len], vs.code);
-        @memcpy(h[ps_sph_off..][0 .. ps_sph.data.len * 4], ps_sph.bytes());
-        @memcpy(h[ps_code_off..][0..ps.code.len], ps.code);
+        // The shader heap is GPU memory, so every one of these goes out through
+        // `gpumem` rather than a plain copy. See that file: an optimising build
+        // widens a plain copy into stores the mapping refuses.
+        gpumem.writeBytes(h[VS_SPH_OFF..], vs_sph.bytes());
+        gpumem.writeBytes(h[VS_CODE_OFF..], vs.code);
+        gpumem.writeBytes(h[ps_sph_off..], ps_sph.bytes());
+        gpumem.writeBytes(h[ps_code_off..], ps.code);
 
         // Own a copy of the vertex attributes: desc.vertex_layout.attributes is borrowed from
         // the caller (the GLES path builds it in a stack array per draw), but a cached pipeline

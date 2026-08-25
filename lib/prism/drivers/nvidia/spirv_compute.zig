@@ -9,6 +9,7 @@
 //! LDC as variable-latency, so no fixup is needed here.
 
 const std = @import("std");
+const gpumem = @import("gpumem.zig");
 const nvidia = @import("nvidia");
 const isel = @import("vulcan-target").nvidia.isel;
 const spirv = @import("../../spirv.zig");
@@ -59,13 +60,13 @@ pub fn runIntBinaryKernel(dev: *NvDevice, spirv_code: []const u8, x: i32, y: i32
     defer dev.freeGpu(cbufm);
 
     // Upload the SASS unmodified.
-    @memcpy(std.mem.bytesAsSlice(u32, codem.bytes)[0..kernel.code.len], kernel.code);
+    gpumem.writeWords(codem.bytes, kernel.code);
 
     // Write the kernel-ABI parameters (output pointer + the two ints) into the
     // constant buffer at param_base. The kernel reads them via LDC c[0][off]. The
     // buffer must cover up to the highest offset read (param_base + 0x10 here).
     const args = [_]i32{ x, y };
-    @memset(cbufm.bytes, 0);
+    gpumem.zero(cbufm.bytes, cbufm.bytes.len);
     writeParams(cbufm.bytes, outm.va, &args);
     const cbuf_size: u32 = isel.param_base + 0x10;
 
@@ -87,7 +88,7 @@ pub fn runIntBinaryKernel(dev: *NvDevice, spirv_code: []const u8, x: i32, y: i32
     });
     const qmdm = try dev.allocGpu(.system, 0x1000);
     defer dev.freeGpu(qmdm);
-    @memcpy(std.mem.bytesAsSlice(u32, qmdm.bytes)[0..QMD_DWORDS_V05], &qmd);
+    gpumem.writeWords(qmdm.bytes, &qmd);
 
     // Channel infrastructure: USERD, GPFIFO ring, pushbuffer, completion sema.
     const userd = try dev.allocGpu(.vram, 0x1000);

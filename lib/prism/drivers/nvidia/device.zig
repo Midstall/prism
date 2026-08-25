@@ -1,4 +1,5 @@
 const std = @import("std");
+const gpumem = @import("gpumem.zig");
 const nvidia = @import("nvidia");
 const hal = @import("../../hal.zig");
 const Resource = @import("resource.zig").Resource;
@@ -231,7 +232,7 @@ pub const Device = struct {
     pub fn ensureOcclusionBuf(self: *Device) ?u64 {
         if (self.occlusion_buf == null) {
             self.occlusion_buf = self.allocGpu(.system_wc, 64) catch return null;
-            @memset(self.occlusion_buf.?.bytes[0..64], 0);
+            gpumem.zero(self.occlusion_buf.?.bytes, 64);
         }
         return self.occlusion_buf.?.va;
     }
@@ -879,7 +880,7 @@ pub const Device = struct {
             destroyResource(ptr, tex);
             return e;
         };
-        @memcpy(staging[0 .. @as(usize, w) * h * 4], buf.bytes[0 .. @as(usize, w) * h * 4]);
+        gpumem.readBytes(staging, buf.bytes, @as(usize, w) * h * 4);
         return tex;
     }
 

@@ -3,6 +3,7 @@
 //! position AST o[0x70..0x7c]. PS color goes to R0..R3. Counterpart to spirv_compute.zig.
 
 const std = @import("std");
+const gpumem = @import("gpumem.zig");
 const nvidia = @import("nvidia");
 const hal = @import("../../hal.zig");
 const spirv = @import("../../spirv.zig");
@@ -376,7 +377,7 @@ pub fn runBlend(gpa: std.mem.Allocator, dev: hal.Device, w: u32, h: u32, clear: 
         -0.5, -0.5, 0.0, 1.0, // bottom-left
         0.5, -0.5, 0.0, 1.0, // bottom-right
     };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
 
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .rgba8_unorm, .offset = 0 },
@@ -448,7 +449,7 @@ pub fn run(gpa: std.mem.Allocator, dev: hal.Device, w: u32, h: u32, clear: hal.C
         -0.5, -0.5, 0.0, 1.0, // bottom-left
         0.5, -0.5, 0.0, 1.0, // bottom-right
     };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
 
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .rgba8_unorm, .offset = 0 }, // clip-space position
@@ -517,7 +518,7 @@ pub fn runDiscard(gpa: std.mem.Allocator, dev: hal.Device, w: u32, h: u32, clear
         -0.5, -0.5, 0.0, 1.0, // bottom-left
         0.5, -0.5, 0.0, 1.0, // bottom-right
     };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
 
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .rgba8_unorm, .offset = 0 },
@@ -583,7 +584,7 @@ pub fn runFragCoord(gpa: std.mem.Allocator, dev: hal.Device, w: u32, h: u32, cle
         -1.0, -1.0, 0.0, 1.0, // bottom-left
         3.0, -1.0, 0.0, 1.0, // bottom-right (off-screen right)
     };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
 
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .rgba8_unorm, .offset = 0 },
@@ -649,7 +650,7 @@ pub fn runFrontFace(gpa: std.mem.Allocator, dev: hal.Device, w: u32, h: u32, cle
         top ++ br ++ bl
     else
         top ++ bl ++ br;
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
 
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .rgba8_unorm, .offset = 0 },
@@ -719,7 +720,7 @@ pub fn runGradient(gpa: std.mem.Allocator, dev: hal.Device, w: u32, h: u32, clea
         -0.5, -0.5, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, // bottom-left  -> green
         0.5, -0.5, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, // bottom-right -> blue
     };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
 
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .rgba8_unorm, .offset = 0 }, // clip-space position
@@ -790,7 +791,7 @@ pub fn runGradientFromSpirvModule(gpa: std.mem.Allocator, dev: hal.Device, w: u3
         -0.5, -0.5, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, // bottom-left  -> green
         0.5, -0.5, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, // bottom-right -> blue
     };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
 
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .rgba8_unorm, .offset = 0 },
@@ -1137,7 +1138,7 @@ test "ORACLE-FLOAT-RT: an HDR value (>1.0) renders into an rgba16f RT and reads 
         -0.8, -0.8, 0.0, 1.0, // bottom-left
         0.8, -0.8, 0.0, 1.0, // bottom-right
     };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
     const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .rgba8_unorm, .offset = 0 }};
     const pipe = try dev.createPipeline(.{
         .vertex = vs,
@@ -1194,7 +1195,7 @@ test "ORACLE-FLOAT-RT32: an HDR value renders into an rgba32f RT and reads back 
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = 3 * 16, .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
     const verts = [_]f32{ 0.0, 0.8, 0.0, 1.0, -0.8, -0.8, 0.0, 1.0, 0.8, -0.8, 0.0, 1.0 };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
     const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .rgba8_unorm, .offset = 0 }};
     const pipe = try dev.createPipeline(.{
         .vertex = vs,
@@ -1251,7 +1252,7 @@ test "ORACLE-FLOAT-MSAA: a 4x-MSAA rgba16f target resolves an HDR value UNCLAMPE
     defer dev.destroyResource(vbuf);
     // A large triangle fully covering the center (all 4 samples there average to the same HDR value).
     const verts = [_]f32{ 0.0, 0.9, 0.0, 1.0, -0.9, -0.9, 0.0, 1.0, 0.9, -0.9, 0.0, 1.0 };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
     const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .rgba8_unorm, .offset = 0 }};
     const pipe = try dev.createPipeline(.{
         .vertex = vs,
@@ -1489,8 +1490,8 @@ test "ORACLE-FRAGDEPTH: gl_FragDepth governs the depth test AND write on the NVI
             defer dev.destroyResource(green_vb);
             const red_vb = try dev.createResource(.{ .buffer = .{ .size = 12 * 4, .usage = .{ .vertex = true } } });
             defer dev.destroyResource(red_vb);
-            @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(green_vb))[0..12], &green_verts);
-            @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(red_vb))[0..12], &red_verts);
+            gpumem.writeFloats(try dev.mapResource(green_vb), &green_verts);
+            gpumem.writeFloats(try dev.mapResource(red_vb), &red_verts);
             const ctx = try dev.createContext();
             defer ctx.deinit();
             const rt = try dev.createResource(.{ .image = .{ .width = W, .height = H, .format = .bgra8_unorm, .usage = .{ .render_target = true } } });
@@ -1559,7 +1560,7 @@ test "ORACLE-MRT: a fragment shader writes two render targets on the NVIDIA GPU 
             const vbuf = try dev.createResource(.{ .buffer = .{ .size = 3 * 16, .usage = .{ .vertex = true } } });
             defer dev.destroyResource(vbuf);
             const verts = [_]f32{ 0.0, 0.5, 0.0, 1.0, -0.5, -0.5, 0.0, 1.0, 0.5, -0.5, 0.0, 1.0 };
-            @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+            gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
             const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .rgba8_unorm, .offset = 0 }};
             const pipe = try dev.createPipeline(.{ .vertex = vs, .fragment = ps, .vertex_layout = .{ .stride = 16, .attributes = &attrs }, .color_format = .bgra8_unorm });
             defer dev.destroyPipeline(pipe);
@@ -1630,8 +1631,8 @@ test "ORACLE-PERDRAW-UBO: draws in ONE submit each read their OWN bound UBO on t
             defer dev.destroyResource(green_ubo);
             const red_ubo = try dev.createResource(.{ .buffer = .{ .size = 16, .usage = .{ .uniform = true } } });
             defer dev.destroyResource(red_ubo);
-            @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(green_ubo))[0..4], &[_]f32{ 0, 1, 0, 1 });
-            @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(red_ubo))[0..4], &[_]f32{ 1, 0, 0, 1 });
+            gpumem.writeFloats(try dev.mapResource(green_ubo), &[_]f32{ 0, 1, 0, 1 });
+            gpumem.writeFloats(try dev.mapResource(red_ubo), &[_]f32{ 1, 0, 0, 1 });
             // Left triangle (x in [-0.9,-0.1]) and right (x in [0.1,0.9]).
             const lv = [_]f32{ -0.5, 0.6, 0, 1, -0.9, -0.6, 0, 1, -0.1, -0.6, 0, 1 };
             const rv = [_]f32{ 0.5, 0.6, 0, 1, 0.1, -0.6, 0, 1, 0.9, -0.6, 0, 1 };
@@ -1639,8 +1640,8 @@ test "ORACLE-PERDRAW-UBO: draws in ONE submit each read their OWN bound UBO on t
             defer dev.destroyResource(lvb);
             const rvb = try dev.createResource(.{ .buffer = .{ .size = 48, .usage = .{ .vertex = true } } });
             defer dev.destroyResource(rvb);
-            @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(lvb))[0..12], &lv);
-            @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(rvb))[0..12], &rv);
+            gpumem.writeFloats(try dev.mapResource(lvb), &lv);
+            gpumem.writeFloats(try dev.mapResource(rvb), &rv);
             const rt = try dev.createResource(.{ .image = .{ .width = W, .height = H, .format = .bgra8_unorm, .usage = .{ .render_target = true } } });
             defer dev.destroyResource(rt);
             const ctx = try dev.createContext();
@@ -1717,8 +1718,8 @@ test "ORACLE-MULTIPIPELINE: two pipelines in ONE submit each render with their o
     defer dev.destroyResource(lvb);
     const rvb = try dev.createResource(.{ .buffer = .{ .size = 48, .usage = .{ .vertex = true } } });
     defer dev.destroyResource(rvb);
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(lvb))[0..12], &lv);
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(rvb))[0..12], &rv);
+    gpumem.writeFloats(try dev.mapResource(lvb), &lv);
+    gpumem.writeFloats(try dev.mapResource(rvb), &rv);
     const rt = try dev.createResource(.{ .image = .{ .width = W, .height = H, .format = .bgra8_unorm, .usage = .{ .render_target = true } } });
     defer dev.destroyResource(rt);
     const ctx = try dev.createContext();
@@ -1960,7 +1961,7 @@ fn renderGoldGradient(gpa: std.mem.Allocator, dev: hal.Device, w: u32, h: u32, c
         -0.5, -0.5, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0,
         0.5,  -0.5, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0,
     };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
 
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .rgba8_unorm, .offset = 0 },
@@ -2155,7 +2156,7 @@ fn runPosPassthrough(gpa: std.mem.Allocator, dev: hal.Device, w: u32, h: u32, cl
         0.1, 0.1, 0.5, 1.0, // bottom-left
         0.9, 0.1, 0.5, 1.0, // bottom-right
     };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
 
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .rgba8_unorm, .offset = 0 },
@@ -2365,7 +2366,7 @@ fn runSecondVarying(gpa: std.mem.Allocator, dev: hal.Device, w: u32, h: u32, cle
         -0.5, -0.5, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, // BL:     col0 green, col1 magenta
         0.5, -0.5, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, // BR:     col0 blue,  col1 yellow
     };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
 
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .rgba8_unorm, .offset = 0 },
@@ -2627,7 +2628,7 @@ fn runArithIpa(gpa: std.mem.Allocator, dev: hal.Device, w: u32, h: u32, clear: h
         0.1, 0.1, 0.5, 1.0,
         0.9, 0.1, 0.5, 1.0,
     };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
     const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .rgba8_unorm, .offset = 0 }};
     const pipe = try dev.createPipeline(.{
         .vertex = vs,
@@ -2794,7 +2795,7 @@ fn runDivergent(gpa: std.mem.Allocator, dev: hal.Device, w: u32, h: u32, clear: 
         0.1, 0.1, 0.5, 1.0,
         0.9, 0.1, 0.5, 1.0,
     };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
     const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .rgba8_unorm, .offset = 0 }};
     const pipe = try dev.createPipeline(.{
         .vertex = vs,
@@ -2953,7 +2954,7 @@ test "ORACLE: a default-uniform-block (es2gears) VS reads its bound MaterialColo
     };
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = verts.len * @sizeOf(Vtx), .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.write(try dev.mapResource(vbuf), &verts);
 
     // The std140 block: MVP@0 (identity), NormalMatrix@64 (identity), Light@128 (+z),
     // MaterialColor@144 = green (0,1,0,1). 40 floats = 160 bytes. Light.w (float 35) is
@@ -3083,7 +3084,7 @@ test "ORACLE: a boolean VALUE from a comparison-and (the light-phong panic const
     };
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = verts.len * @sizeOf(Vtx), .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.write(try dev.mapResource(vbuf), &verts);
 
     const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .r32g32b32_float, .offset = 0 }};
     const pipe = try dev.createPipeline(.{
@@ -3150,7 +3151,7 @@ fn runTight(gpa: std.mem.Allocator, dev: hal.Device, w: u32, h: u32, clear: hal.
         -0.9, -0.9, 0.0, 1.0,
         0.9,  -0.9, 0.0, 1.0,
     };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
     const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .rgba8_unorm, .offset = 0 }};
     const pipe = try dev.createPipeline(.{
         .vertex = vs,
@@ -3265,7 +3266,7 @@ test "ORACLE: the block-linear de-swizzle faithfully reports the NVIDIA GPU outp
         0.55, 0.9,  0.0, 1.0,
         -0.6, -0.9, 0.0, 1.0,
     };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
     const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .rgba8_unorm, .offset = 0 }};
     const pipe = try dev.createPipeline(.{ .vertex = vs, .fragment = ps, .vertex_layout = .{ .stride = 16, .attributes = &attrs }, .color_format = .bgra8_unorm });
     defer dev.destroyPipeline(pipe);
@@ -3434,7 +3435,7 @@ test "ORACLE: GLES textured quad samples the 2x2 checkerboard in software-matchi
     };
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(quad)), .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..quad.len], &quad);
+    gpumem.write(try dev.mapResource(vbuf), &quad);
 
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .r32g32_float, .offset = 0 }, // position
@@ -3655,7 +3656,7 @@ test "ORACLE-SHADOW: a sampler2DShadow depth-compare TEX lights ref<=depth and s
     const quad = [6][2]f32{ .{ -1, -1 }, .{ 1, -1 }, .{ 1, 1 }, .{ -1, -1 }, .{ 1, 1 }, .{ -1, 1 } };
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(quad)), .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice([2]f32, try dev.mapResource(vbuf))[0..quad.len], &quad);
+    gpumem.write(try dev.mapResource(vbuf), &quad);
 
     const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .r32g32_float, .offset = 0 }};
     const pipe_lit = try dev.createPipeline(.{ .vertex = vs, .fragment = fs_lit, .vertex_layout = .{ .stride = 8, .attributes = &attrs }, .color_format = .rgba8_unorm });
@@ -3795,7 +3796,7 @@ test "ORACLE-SHADOW-2PASS: PASS 1 RENDERS depth into a ZETA, the CE copies it in
     const quad = [6][2]f32{ .{ -1, -1 }, .{ 1, -1 }, .{ 1, 1 }, .{ -1, -1 }, .{ 1, 1 }, .{ -1, 1 } };
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(quad)), .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice([2]f32, try dev.mapResource(vbuf))[0..quad.len], &quad);
+    gpumem.write(try dev.mapResource(vbuf), &quad);
     const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .r32g32_float, .offset = 0 }};
 
     // The color RT for PASS 1 (throwaway) and the ZETA depth surface it renders into. A depth32_float
@@ -3833,7 +3834,7 @@ test "ORACLE-SHADOW-2PASS: PASS 1 RENDERS depth into a ZETA, the CE copies it in
     const dst_pitch: u32 = W * 4;
     const dst = try nv.allocGpu(.system, @as(u64, dst_pitch) * H);
     defer nv.freeGpu(dst);
-    @memset(dst.bytes[0 .. @as(usize, dst_pitch) * H], 0);
+    gpumem.zero(dst.bytes, @as(usize, dst_pitch) * H);
     const ce = CopyEngine.create(nv) catch return error.SkipZigTest;
     defer ce.deinit();
     try ce.detile(zeta_res, dst, dst_pitch);
@@ -3849,7 +3850,7 @@ test "ORACLE-SHADOW-2PASS: PASS 1 RENDERS depth into a ZETA, the CE copies it in
     defer dev.destroyResource(tex);
     {
         const staging = try dev.mapResource(tex); // a sampled texture hands back its linear staging
-        @memcpy(staging[0 .. @as(usize, W) * H * 4], dst.bytes[0 .. @as(usize, W) * H * 4]);
+        gpumem.readBytes(staging, dst.bytes, @as(usize, W) * H * 4);
     }
 
     // PASS 2 pipelines: the sampler2DShadow lookup against the rendered depth texture.
@@ -3963,7 +3964,7 @@ test "ORACLE-CUBE-SHADOW: a samplerCubeShadow depth-compare TEX lights ref<=dept
     const quad = [6][2]f32{ .{ -1, -1 }, .{ 1, -1 }, .{ 1, 1 }, .{ -1, -1 }, .{ 1, 1 }, .{ -1, 1 } };
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(quad)), .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice([2]f32, try dev.mapResource(vbuf))[0..quad.len], &quad);
+    gpumem.write(try dev.mapResource(vbuf), &quad);
 
     const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .r32g32_float, .offset = 0 }};
     const pipe_lit = try dev.createPipeline(.{ .vertex = vs, .fragment = fs_lit, .vertex_layout = .{ .stride = 8, .attributes = &attrs }, .color_format = .rgba8_unorm });
@@ -4074,7 +4075,7 @@ test "ORACLE-ARRAY-SHADOW: a sampler2DArrayShadow depth-compare TEX lights ref<=
     const quad = [6][2]f32{ .{ -1, -1 }, .{ 1, -1 }, .{ 1, 1 }, .{ -1, -1 }, .{ 1, 1 }, .{ -1, 1 } };
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(quad)), .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice([2]f32, try dev.mapResource(vbuf))[0..quad.len], &quad);
+    gpumem.write(try dev.mapResource(vbuf), &quad);
 
     const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .r32g32_float, .offset = 0 }};
     const pipe_lit = try dev.createPipeline(.{ .vertex = vs, .fragment = fs_lit, .vertex_layout = .{ .stride = 8, .attributes = &attrs }, .color_format = .rgba8_unorm });
@@ -4207,7 +4208,7 @@ test "ORACLE-CUBE-SHADOW-2PASS: PASS 1 RENDERS depth into 6 cube faces via ZETA+
     const quad = [6][2]f32{ .{ -1, -1 }, .{ 1, -1 }, .{ 1, 1 }, .{ -1, -1 }, .{ 1, 1 }, .{ -1, 1 } };
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(quad)), .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice([2]f32, try dev.mapResource(vbuf))[0..quad.len], &quad);
+    gpumem.write(try dev.mapResource(vbuf), &quad);
     const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .r32g32_float, .offset = 0 }};
 
     // The shared PASS-1 color RT (throwaway) + the ZETA depth surface reused across all 6 faces.
@@ -4255,9 +4256,9 @@ test "ORACLE-CUBE-SHADOW-2PASS: PASS 1 RENDERS depth into 6 cube faces via ZETA+
         }
         // COPY: CE-detile the block-linear ZETA into pitch-linear f32, then memcpy this face's
         // row-major depths into its cube-staging slot (face-major: face f at f*W*H*4).
-        @memset(dst.bytes[0 .. @as(usize, dst_pitch) * H], 0);
+        gpumem.zero(dst.bytes, @as(usize, dst_pitch) * H);
         try ce.detile(zeta_res, dst, dst_pitch);
-        @memcpy(cube_staging[face * face_bytes ..][0..face_bytes], dst.bytes[0..face_bytes]);
+        gpumem.readBytes(cube_staging[face * face_bytes ..], dst.bytes, face_bytes);
         if (face == 4) {
             const depths = std.mem.bytesAsSlice(f32, @as([]align(@alignOf(f32)) const u8, @alignCast(dst.bytes[0..face_bytes])));
             plus_z_center = depths[(H / 2) * W + W / 2];
@@ -4394,7 +4395,7 @@ test "ORACLE-ARRAY-SHADOW-2PASS: PASS 1 RENDERS depth into 2 array layers via ZE
     const quad = [6][2]f32{ .{ -1, -1 }, .{ 1, -1 }, .{ 1, 1 }, .{ -1, -1 }, .{ 1, 1 }, .{ -1, 1 } };
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(quad)), .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice([2]f32, try dev.mapResource(vbuf))[0..quad.len], &quad);
+    gpumem.write(try dev.mapResource(vbuf), &quad);
     const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .r32g32_float, .offset = 0 }};
 
     const rt1 = try dev.createResource(.{ .image = .{ .width = W, .height = H, .format = .rgba8_unorm, .usage = .{ .render_target = true } } });
@@ -4436,9 +4437,9 @@ test "ORACLE-ARRAY-SHADOW-2PASS: PASS 1 RENDERS depth into 2 array layers via ZE
             try cb.draw(6, 0);
             try ctx.submit(cb);
         }
-        @memset(dst.bytes[0 .. @as(usize, dst_pitch) * H], 0);
+        gpumem.zero(dst.bytes, @as(usize, dst_pitch) * H);
         try ce.detile(zeta_res, dst, dst_pitch);
-        @memcpy(arr_staging[layer * layer_bytes ..][0..layer_bytes], dst.bytes[0..layer_bytes]);
+        gpumem.readBytes(arr_staging[layer * layer_bytes ..], dst.bytes, layer_bytes);
         if (layer == 1) {
             const depths = std.mem.bytesAsSlice(f32, @as([]align(@alignOf(f32)) const u8, @alignCast(dst.bytes[0..layer_bytes])));
             l1_center = depths[(H / 2) * W + W / 2];
@@ -4539,7 +4540,7 @@ test "ORACLE-GATHER: textureGather returns the 4 footprint texels of one compone
     };
     const tex = try dev.createResource(.{ .image = .{ .width = 2, .height = 2, .format = .rgba8_unorm, .usage = .{ .sampled = true } } });
     defer dev.destroyResource(tex);
-    @memcpy((try dev.mapResource(tex))[0..tex_px.len], &tex_px);
+    gpumem.write(try dev.mapResource(tex), &tex_px);
 
     // The software golden for the center coord (0.5,0.5): the 4 gathered texels in GL order.
     var sw_desc = sw_sampler.TexDesc{ .pixels = &tex_px, .width = 2, .height = 2, .pitch = 8, .filter = .nearest, .address_u = .clamp_to_edge, .address_v = .clamp_to_edge };
@@ -4559,7 +4560,7 @@ test "ORACLE-GATHER: textureGather returns the 4 footprint texels of one compone
     };
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(quad)), .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..quad.len], &quad);
+    gpumem.write(try dev.mapResource(vbuf), &quad);
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .r32g32_float, .offset = 0 },
         .{ .location = 1, .format = .r32g32_float, .offset = 8 },
@@ -4654,7 +4655,7 @@ test "ORACLE-FETCH: texelFetch returns the EXACT texel at integer coords on the 
     const tex_px = [_]u8{ 255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255 };
     const tex = try dev.createResource(.{ .image = .{ .width = 2, .height = 2, .format = .rgba8_unorm, .usage = .{ .sampled = true } } });
     defer dev.destroyResource(tex);
-    @memcpy((try dev.mapResource(tex))[0..tex_px.len], &tex_px);
+    gpumem.write(try dev.mapResource(tex), &tex_px);
     var sw_desc = sw_sampler.TexDesc{ .pixels = &tex_px, .width = 2, .height = 2, .pitch = 8, .filter = .linear };
 
     const Vtx = extern struct { x: f32, y: f32, cx: f32, cy: f32 };
@@ -4682,7 +4683,7 @@ test "ORACLE-FETCH: texelFetch returns the EXACT texel at integer coords on the 
             .{ .x = 3, .y = -1, .cx = cse.x, .cy = cse.y },
             .{ .x = -1, .y = 3, .cx = cse.x, .cy = cse.y },
         };
-        @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..3], &tri);
+        gpumem.write(try dev.mapResource(vbuf), &tri);
         {
             const cb = try ctx.beginCommands();
             defer cb.deinit();
@@ -4770,7 +4771,7 @@ test "ORACLE-FETCH3: texelFetch on a sampler2DArray + sampler3D fetches the exac
             };
             const tex = try device.createResource(.{ .image = .{ .width = 2, .height = 2, .depth = 3, .array = is_array, .format = .rgba8_unorm, .usage = .{ .sampled = true } } });
             defer device.destroyResource(tex);
-            @memcpy((try device.mapResource(tex))[0..vol2.len], &vol2);
+            gpumem.write(try device.mapResource(tex), &vol2);
             const vbuf = try device.createResource(.{ .buffer = .{ .size = 3 * @sizeOf(Vtx), .usage = .{ .vertex = true } } });
             defer device.destroyResource(vbuf);
             const fx: f32 = @floatFromInt(x);
@@ -4781,7 +4782,7 @@ test "ORACLE-FETCH3: texelFetch on a sampler2DArray + sampler3D fetches the exac
                 .{ .x = 3, .y = -1, .cx = fx, .cy = fy, .cz = fz },
                 .{ .x = -1, .y = 3, .cx = fx, .cy = fy, .cz = fz },
             };
-            @memcpy(std.mem.bytesAsSlice(Vtx, try device.mapResource(vbuf))[0..3], &tri);
+            gpumem.write(try device.mapResource(vbuf), &tri);
             const pipe = try device.createPipeline(.{ .vertex = vs, .fragment = fs, .vertex_layout = .{ .stride = @sizeOf(Vtx), .attributes = at }, .color_format = .rgba8_unorm });
             defer device.destroyPipeline(pipe);
             const ctx = try device.createContext();
@@ -4889,7 +4890,7 @@ test "ORACLE-3D-TEX: a sampler3D LUT selects the right Z-slice by the w coordina
             .{ .x = 1, .y = 1, .cx = 0.5, .cy = 0.5, .cz = 1 },   .{ .x = -1, .y = -1, .cx = 0.5, .cy = 0.5, .cz = 0 },
             .{ .x = 1, .y = 1, .cx = 0.5, .cy = 0.5, .cz = 1 },   .{ .x = -1, .y = 1, .cx = 0.5, .cy = 0.5, .cz = 0 },
         };
-        @memcpy(std.mem.bytesAsSlice(V, try dev.mapResource(vbuf))[0..6], &q);
+        gpumem.write(try dev.mapResource(vbuf), &q);
         const cb = try ctx.beginCommands();
         defer cb.deinit();
         try cb.setRenderTarget(rt);
@@ -4997,7 +4998,7 @@ test "ORACLE-3D-WITHIN-SLICE: a sampler3D with a 2x2 within-slice picks the righ
             .{ .x = 1, .y = 1, .cx = 1, .cy = 1, .cz = 0.25 },   .{ .x = -1, .y = -1, .cx = 0, .cy = 0, .cz = 0.25 },
             .{ .x = 1, .y = 1, .cx = 1, .cy = 1, .cz = 0.25 },   .{ .x = -1, .y = 1, .cx = 0, .cy = 1, .cz = 0.25 },
         };
-        @memcpy(std.mem.bytesAsSlice(V, try dev.mapResource(vbuf))[0..6], &q);
+        gpumem.write(try dev.mapResource(vbuf), &q);
         const cb = try ctx.beginCommands();
         defer cb.deinit();
         try cb.setRenderTarget(rt);
@@ -5106,7 +5107,7 @@ test "ORACLE-3D-LINEAR: a sampler3D LINEAR-filters WITHIN a slice (bilinear) AND
                 .{ .x = 1, .y = 1, .cx = 0.5, .cy = 0.5, .cz = cz },   .{ .x = -1, .y = -1, .cx = 0.5, .cy = 0.5, .cz = cz },
                 .{ .x = 1, .y = 1, .cx = 0.5, .cy = 0.5, .cz = cz },   .{ .x = -1, .y = 1, .cx = 0.5, .cy = 0.5, .cz = cz },
             };
-            @memcpy(std.mem.bytesAsSlice(V, device.mapResource(vb) catch unreachable)[0..6], &q);
+            gpumem.write(device.mapResource(vb) catch unreachable, &q);
             const cb = context.beginCommands() catch unreachable;
             defer cb.deinit();
             cb.setRenderTarget(target) catch unreachable;
@@ -5182,7 +5183,7 @@ test "ORACLE-2DARRAY: a sampler2DArray selects a LAYER by a raw index AND reads 
     };
     const arr = try dev.createResource(.{ .image = .{ .width = 2, .height = 2, .depth = 3, .array = true, .format = .rgba8_unorm, .usage = .{ .sampled = true } } });
     defer dev.destroyResource(arr);
-    @memcpy((try dev.mapResource(arr))[0..vol.len], &vol);
+    gpumem.write(try dev.mapResource(arr), &vol);
 
     // Software golden for the same descriptor (layer-major, is_2darray).
     var sw_desc = sw_sampler.TexDesc{ .pixels = &vol, .width = 2, .height = 2, .pitch = 8, .filter = .nearest, .is_2darray = true, .depth = 3 };
@@ -5214,7 +5215,7 @@ test "ORACLE-2DARRAY: a sampler2DArray selects a LAYER by a raw index AND reads 
                 .{ .x = 1, .y = 1, .cx = 1, .cy = 1, .cz = layer },   .{ .x = -1, .y = -1, .cx = 0, .cy = 0, .cz = layer },
                 .{ .x = 1, .y = 1, .cx = 1, .cy = 1, .cz = layer },   .{ .x = -1, .y = 1, .cx = 0, .cy = 1, .cz = layer },
             };
-            @memcpy(std.mem.bytesAsSlice(V, device.mapResource(vb) catch unreachable)[0..6], &q);
+            gpumem.write(device.mapResource(vb) catch unreachable, &q);
             const cb = context.beginCommands() catch unreachable;
             defer cb.deinit();
             cb.setRenderTarget(target) catch unreachable;
@@ -5373,7 +5374,7 @@ test "ORACLE-CUBE-TEX: a samplerCube on the NVIDIA GPU selects the correct GL fa
             .{ .x = 1, .y = 1, .dx = d[0], .dy = d[1], .dz = d[2] },   .{ .x = -1, .y = -1, .dx = d[0], .dy = d[1], .dz = d[2] },
             .{ .x = 1, .y = 1, .dx = d[0], .dy = d[1], .dz = d[2] },   .{ .x = -1, .y = 1, .dx = d[0], .dy = d[1], .dz = d[2] },
         };
-        @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..6], &q);
+        gpumem.write(try dev.mapResource(vbuf), &q);
         const dctx = try dev.createContext();
         defer dctx.deinit();
         const cb = try dctx.beginCommands();
@@ -5471,7 +5472,7 @@ test "ORACLE-CUBE-SEAM: LINEAR sampling near a cube face edge does NOT bleed int
         .{ .x = 1, .y = 1, .dx = d[0], .dy = d[1], .dz = d[2] },   .{ .x = -1, .y = -1, .dx = d[0], .dy = d[1], .dz = d[2] },
         .{ .x = 1, .y = 1, .dx = d[0], .dy = d[1], .dz = d[2] },   .{ .x = -1, .y = 1, .dx = d[0], .dy = d[1], .dz = d[2] },
     };
-    @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..6], &q);
+    gpumem.write(try dev.mapResource(vbuf), &q);
     const ctx = try dev.createContext();
     defer ctx.deinit();
     const cb = try ctx.beginCommands();
@@ -5569,7 +5570,7 @@ test "ORACLE-2D-MIPMAP: implicit-LOD minification of a mipmapped 2D texture sele
         .{ .x = -1, .y = -1, .u = 0, .v = 0 }, .{ .x = 1, .y = -1, .u = 8, .v = 0 }, .{ .x = 1, .y = 1, .u = 8, .v = 8 },
         .{ .x = -1, .y = -1, .u = 0, .v = 0 }, .{ .x = 1, .y = 1, .u = 8, .v = 8 },  .{ .x = -1, .y = 1, .u = 0, .v = 8 },
     };
-    @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..6], &q);
+    gpumem.write(try dev.mapResource(vbuf), &q);
     const cb = try ctx.beginCommands();
     defer cb.deinit();
     try cb.setRenderTarget(rt);
@@ -5660,7 +5661,7 @@ test "ORACLE-BASE-LEVEL: GL_TEXTURE_BASE_LEVEL clamps the sampled mip on the NVI
         .{ .x = -1, .y = -1, .u = 0, .v = 0 }, .{ .x = 1, .y = -1, .u = 1, .v = 0 }, .{ .x = 1, .y = 1, .u = 1, .v = 1 },
         .{ .x = -1, .y = -1, .u = 0, .v = 0 }, .{ .x = 1, .y = 1, .u = 1, .v = 1 },  .{ .x = -1, .y = 1, .u = 0, .v = 1 },
     };
-    @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..6], &q);
+    gpumem.write(try dev.mapResource(vbuf), &q);
 
     // base_level 0: magnified sample reads the red base level.
     {
@@ -5752,7 +5753,7 @@ test "ORACLE-SWIZZLE: GL_TEXTURE_SWIZZLE remaps sampled channels on the NVIDIA G
         .{ .x = -1, .y = -1, .u = 0, .v = 0 }, .{ .x = 1, .y = -1, .u = 1, .v = 0 }, .{ .x = 1, .y = 1, .u = 1, .v = 1 },
         .{ .x = -1, .y = -1, .u = 0, .v = 0 }, .{ .x = 1, .y = 1, .u = 1, .v = 1 },  .{ .x = -1, .y = 1, .u = 0, .v = 1 },
     };
-    @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..6], &q);
+    gpumem.write(try dev.mapResource(vbuf), &q);
     // Broadcast R to R/G/B (the font-coverage idiom): the TIC X/Y/Z_SOURCE all read IN_R.
     const cb = try ctx.beginCommands();
     defer cb.deinit();
@@ -5840,7 +5841,7 @@ test "ORACLE-LOD-BIAS: GL_TEXTURE_LOD_BIAS pushes the sampled mip coarser on the
         .{ .x = -1, .y = -1, .u = 0, .v = 0 }, .{ .x = 1, .y = -1, .u = 1, .v = 0 }, .{ .x = 1, .y = 1, .u = 1, .v = 1 },
         .{ .x = -1, .y = -1, .u = 0, .v = 0 }, .{ .x = 1, .y = 1, .u = 1, .v = 1 },  .{ .x = -1, .y = 1, .u = 0, .v = 1 },
     };
-    @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..6], &q);
+    gpumem.write(try dev.mapResource(vbuf), &q);
     const cb = try ctx.beginCommands();
     defer cb.deinit();
     try cb.setRenderTarget(rt);
@@ -5923,7 +5924,7 @@ test "ORACLE-ANISO: anisotropic filtering keeps a fine-axis mip on a grazing (v-
         .{ .x = -1, .y = -1, .u = 0, .v = 0 }, .{ .x = 1, .y = -1, .u = 1, .v = 0 }, .{ .x = 1, .y = 1, .u = 1, .v = 16 },
         .{ .x = -1, .y = -1, .u = 0, .v = 0 }, .{ .x = 1, .y = 1, .u = 1, .v = 16 }, .{ .x = -1, .y = 1, .u = 0, .v = 16 },
     };
-    @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..6], &q);
+    gpumem.write(try dev.mapResource(vbuf), &q);
 
     const anisos = [2]f32{ 1.0, 16.0 };
     var got: [2][3]u8 = undefined;
@@ -6033,7 +6034,7 @@ test "ORACLE-CUBE-MIP: textureCubeLod selects the requested cube mip level on th
         var q: [6]Vtx = undefined;
         const corners = [6][2]f32{ .{ -1, -1 }, .{ 1, -1 }, .{ 1, 1 }, .{ -1, -1 }, .{ 1, 1 }, .{ -1, 1 } };
         for (0..6) |k| q[k] = .{ .x = corners[k][0], .y = corners[k][1], .dx = dir[0], .dy = dir[1], .dz = dir[2], .lod = lod };
-        @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..6], &q);
+        gpumem.write(try dev.mapResource(vbuf), &q);
         const ctx = try dev.createContext();
         defer ctx.deinit();
         const cb = try ctx.beginCommands();
@@ -6107,7 +6108,7 @@ test "ORACLE-FLOAT-RT-SAMPLE: a rendered rgba16f RT samples back its HDR value U
     };
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(quad)), .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..quad.len], &quad);
+    gpumem.write(try dev.mapResource(vbuf), &quad);
 
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .r32g32_float, .offset = 0 },
@@ -6227,7 +6228,7 @@ test "ORACLE: a mipmapped texture minifies to a lower mip level on the NVIDIA GP
     };
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(quad)), .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..quad.len], &quad);
+    gpumem.write(try dev.mapResource(vbuf), &quad);
 
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .r32g32_float, .offset = 0 },
@@ -6351,7 +6352,7 @@ test "ORACLE: anisotropic filtering samples a sharper (lower) mip level than iso
     };
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(quad)), .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..quad.len], &quad);
+    gpumem.write(try dev.mapResource(vbuf), &quad);
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .r32g32_float, .offset = 0 },
         .{ .location = 1, .format = .r32g32_float, .offset = 8 },
@@ -6425,7 +6426,7 @@ test "ORACLE: sRGB + fp16 textures sample correctly on the NVIDIA GPU (TIC sRGB 
     };
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(quad)), .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..quad.len], &quad);
+    gpumem.write(try dev.mapResource(vbuf), &quad);
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .r32g32_float, .offset = 0 },
         .{ .location = 1, .format = .r32g32_float, .offset = 8 },
@@ -6464,7 +6465,7 @@ test "ORACLE: sRGB + fp16 textures sample correctly on the NVIDIA GPU (TIC sRGB 
     {
         const tex = try dev.createResource(.{ .image = .{ .width = 1, .height = 1, .format = .rgba8_srgb, .usage = .{ .sampled = true } } });
         defer dev.destroyResource(tex);
-        @memcpy((try dev.mapResource(tex))[0..4], &[_]u8{ 188, 188, 188, 255 });
+        gpumem.write(try dev.mapResource(tex), &[_]u8{ 188, 188, 188, 255 });
         const r = try sampleR(dev, pipe, vbuf, tex);
         try std.testing.expect(r > 110 and r < 145); // sRGB decoded to linear, not 188
     }
@@ -6475,7 +6476,7 @@ test "ORACLE: sRGB + fp16 textures sample correctly on the NVIDIA GPU (TIC sRGB 
         defer dev.destroyResource(tex);
         const h: u16 = @bitCast(@as(f16, 0.5));
         const bytes = [_]u8{ @truncate(h), @truncate(h >> 8) } ** 4;
-        @memcpy((try dev.mapResource(tex))[0..8], &bytes);
+        gpumem.write(try dev.mapResource(tex), &bytes);
         const r = try sampleR(dev, pipe, vbuf, tex);
         try std.testing.expect(r > 110 and r < 145); // fp16 0.5 sampled correctly
     }
@@ -6564,7 +6565,7 @@ test "ORACLE: GLES textured quad samples a 512x512 multi-GOB texture correctly o
     };
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(quad)), .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..quad.len], &quad);
+    gpumem.write(try dev.mapResource(vbuf), &quad);
 
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .r32g32_float, .offset = 0 },
@@ -6692,7 +6693,7 @@ test "ORACLE: GLES textured quad with glmark2's 3-attribute (pos/normal/texcoord
     };
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(quad)), .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice(Vtx, try dev.mapResource(vbuf))[0..quad.len], &quad);
+    gpumem.write(try dev.mapResource(vbuf), &quad);
 
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .r32g32b32_float, .offset = 0 }, // position vec3
@@ -6887,7 +6888,7 @@ fn renderDropGridCull(gpa: std.mem.Allocator, dev: hal.Device, w: u32, h: u32, m
 
     const ubo = try dev.createResource(.{ .buffer = .{ .size = vsc.block_size, .usage = .{ .uniform = true } } });
     defer dev.destroyResource(ubo);
-    @memcpy((try dev.mapResource(ubo))[0..ublock.len], ublock);
+    gpumem.write(try dev.mapResource(ubo), ublock);
 
     // Expand the index list into a non-indexed interleaved vertex stream (the GLES
     // layer's drawTriangleList step). 8 floats per vertex.
@@ -6899,7 +6900,7 @@ fn renderDropGridCull(gpa: std.mem.Allocator, dev: hal.Device, w: u32, h: u32, m
     }
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = exp.len * 4, .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..exp.len], exp);
+    gpumem.writeFloats(try dev.mapResource(vbuf), exp);
 
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .r32g32b32_float, .offset = 0 },
