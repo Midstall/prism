@@ -238,12 +238,21 @@ test "nvidia CE detile of a block-linear RT == the CPU de-swizzle byte-for-byte 
 
     const rt_res: *Resource = @ptrCast(@alignCast(rt));
 
-    // Path A (ground truth): CPU de-swizzle. The RT is .bgra8_unorm, so mapResource
-    // hands back the NO-SWAP de-swizzle (bgra_straight): the exact byte order the CE
-    // copies verbatim. Snapshot it before the CE runs (mapResource owns linear_copy).
-    const cpu = try dev.mapResource(rt);
-    const ground = try gpa.dupe(u8, cpu);
+    // Path A (ground truth): the CPU de-swizzle, called DIRECTLY.
+    //
+    // It used to read `dev.mapResource(rt)` and rely on that returning the CPU
+    // de-swizzle. `mapResource` now detiles on the CE itself, which is the whole
+    // point of having one, so going through it would compare the copy engine
+    // against the copy engine and assert nothing at all. The oracle only means
+    // something while the two paths are genuinely independent.
+    //
+    // The RT is .bgra8_unorm, so the no-swap form (bgra_straight) is the exact
+    // byte order the CE copies verbatim. `mapResource` is still called first,
+    // for its side effect of establishing the CPU mapping the de-swizzle reads.
+    _ = try dev.mapResource(rt);
+    const ground = try gpa.alloc(u8, @as(usize, W) * H * 4);
     defer gpa.free(ground);
+    try self.deswizzleBlockLinear(rt_res, ground, @as(usize, W) * 4, .bgra_straight, 4);
 
     // Path B (CE): detile the SAME block-linear RT into a pitch-linear sysmem buffer.
     const dst_pitch: u32 = W * 4;
