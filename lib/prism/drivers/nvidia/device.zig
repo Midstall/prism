@@ -548,6 +548,46 @@ pub const Device = struct {
                 if (r.linear_copy) |lc| self.gpa.free(lc);
                 r.linear_copy = self.gpa.alloc(u8, lin_len) catch return error.OutOfMemory;
             }
+            // GPU detile via the copy engine, exactly as `readbackPresent` does and
+            // for the same reason it says there: the CE reads the tiled RT at GPU
+            // bandwidth and writes a pitch-linear copy into CACHED sysmem, so the CPU
+            // never reads write-combined VRAM. The CPU de-swizzle below does read it,
+            // and that read is what dominates a readback: one 3002x1665 frame measured
+            // 4.1 SECONDS through this function, against 0 ms for the render that
+            // filled it. `readbackPresent` was given the CE and this path was not, so
+            // every consumer that maps a render target instead of presenting it (an
+            // offscreen surface, a screenshot, phantom's terminal pixel mode) still
+            // paid the slow path.
+            //
+            // 32bpp only: `ce.detile` handles the one 32-bit colour layout. A float RT
+            // keeps the CPU path.
+            //
+            // Falls back on any CE failure, so a machine where the copy engine will
+            // not start behaves exactly as it did before.
+            if (bpp == 4) {
+                if (self.ceDetile(r)) |buf| {
+                    const sb = buf.bytes;
+                    const count = @as(usize, r.width) * r.height;
+                    const dst = r.linear_copy.?;
+                    if (r.format == .rgba8_unorm) {
+                        // buf is the engine's [B,G,R,A]; an rgba8_unorm consumer wants
+                        // [R,G,B,A]. One pass over cached memory, which is the cheap
+                        // part: the expensive part was reading VRAM at all.
+                        var i: usize = 0;
+                        while (i < count) : (i += 1) {
+                            const so = i * 4;
+                            dst[so + 0] = sb[so + 2];
+                            dst[so + 1] = sb[so + 1];
+                            dst[so + 2] = sb[so + 0];
+                            dst[so + 3] = sb[so + 3];
+                        }
+                    } else {
+                        // bgra8_unorm already matches the engine's byte order.
+                        @memcpy(dst[0 .. count * 4], sb[0 .. count * 4]);
+                    }
+                    return dst;
+                } else |_| {}
+            }
             // A float RT (rgba16f/rgba32f) copies its `bpp` bytes straight (R,G,B,A in order).
             // An rgba8_unorm consumer wants true RGBA (swap the engine's B<->R). A bgra8_unorm
             // consumer matches the engine byte order (straight copy).
@@ -566,7 +606,7 @@ pub const Device = struct {
         _ = resource;
     }
 
-    const DeswizzleOut = enum {
+    pub const DeswizzleOut = enum {
         rgba_swap, // A8R8G8B8 VRAM [B,G,R,A] -> [R,G,B,A] (an rgba8_unorm consumer)
         bgra_straight, // copy [B,G,R,A] verbatim (a bgra8_unorm consumer)
         present_bgrx, // [B,G,R,0xff] straight to a wl_shm XRGB8888 present buffer
@@ -585,7 +625,7 @@ pub const Device = struct {
     /// gather reads then hit L1/L2). The per-x byte offset (gob column + intra-GOB x) and
     /// per-y (gob row + intra-GOB y) are each precomputed once, so the inner loop is two
     /// array loads + an add. Byte-identical to graphics.blColorPixelOffset.
-    fn deswizzleBlockLinear(self: *Device, r: *Resource, dst: []u8, dst_stride: usize, mode: DeswizzleOut, bpp: u32) hal.Error!void {
+    pub fn deswizzleBlockLinear(self: *Device, r: *Resource, dst: []u8, dst_stride: usize, mode: DeswizzleOut, bpp: u32) hal.Error!void {
         const src_raw = r.mapping.?.bytes;
         const tiled_len = blk: {
             // The tiled footprint the de-swizzle indexes into (GOB-aligned width x
