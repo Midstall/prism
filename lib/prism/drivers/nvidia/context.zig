@@ -1,4 +1,5 @@
 const std = @import("std");
+const gpumem = @import("gpumem.zig");
 const nvidia = @import("nvidia");
 const hal = @import("../../hal.zig");
 const Resource = @import("resource.zig").Resource;
@@ -418,8 +419,8 @@ pub const Context = struct {
         {
             const ntic = gfx.fillTic(self.tic_pool.va, 1, 1, .rgba8_unorm, 0);
             const ntsc = gfx.fillTsc(.nearest, .clamp_to_edge, .clamp_to_edge, .none, 1);
-            @memcpy(std.mem.bytesAsSlice(u32, self.tic_pool.bytes[0..32]), &ntic);
-            @memcpy(std.mem.bytesAsSlice(u32, self.tsc_pool.bytes[0..32]), &ntsc);
+            gpumem.writeWords(self.tic_pool.bytes[0..32], &ntic);
+            gpumem.writeWords(self.tsc_pool.bytes[0..32], &ntsc);
         }
 
         self.channel = dev.client.allocChannel(dev.dev, sdk.BLACKWELL_CHANNEL_GPFIFO_B, dev.vaspace, self.gpfifo.va, 0x100, self.userd.mem) catch |e| return nverr(e);
@@ -611,8 +612,8 @@ pub const Context = struct {
             // GL_TEXTURE_COMPARE_MODE (sampler2DShadow): the TSC holds the depth-compare enable + func.
             // The isel's texShadow sets the TEX z_cmpr bit so the HW compares dref vs stored depth (R).
             gfx.setTscDepthCompare(&tsc, tb.compare_enable, @intFromEnum(tb.compare_op));
-            @memcpy(std.mem.bytesAsSlice(u32, self.tic_pool.bytes[desc_idx * 32 ..][0..32]), &tic);
-            @memcpy(std.mem.bytesAsSlice(u32, self.tsc_pool.bytes[desc_idx * 32 ..][0..32]), &tsc);
+            gpumem.writeWords(self.tic_pool.bytes[desc_idx * 32 ..][0..32], &tic);
+            gpumem.writeWords(self.tsc_pool.bytes[desc_idx * 32 ..][0..32], &tsc);
             const handle: u32 = (desc_idx & 0xfffff) | (desc_idx << 20);
             gfx.loadConstantBuffer(s, UBO_CB_BASE + idx * 8, &.{ handle, 0 });
             // A cubemap is sampled as a 6-face-wide atlas. The isel clamps the within-face u to
@@ -666,7 +667,7 @@ pub const Context = struct {
         if (snap.len > ring.bytes.len) return null;
         var off = std.mem.alignForward(u64, self.ubo_ring_off, 256);
         if (off + snap.len > ring.bytes.len) off = 0;
-        @memcpy(ring.bytes[@intCast(off)..][0..snap.len], snap);
+        gpumem.writeBytes(ring.bytes[@intCast(off)..], snap);
         self.ubo_ring_off = off + snap.len;
         return ring.va + off;
     }
@@ -1546,7 +1547,7 @@ test "nvidia draws a gradient triangle through the HAL draw path (skips without 
         -0.5, -0.5, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, // bottom-left -> green
         0.5, -0.5, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, // bottom-right -> blue
     };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
 
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .rgba8_unorm, .offset = 0 }, // position (clip space)
@@ -1678,8 +1679,8 @@ test "nvidia depth test occludes draw-order-independently on the GPU (skips with
     defer dev.destroyResource(far_vb);
     const near_vb = try dev.createResource(.{ .buffer = .{ .size = near_verts.len * 4, .usage = .{ .vertex = true } } });
     defer dev.destroyResource(near_vb);
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(far_vb))[0..far_verts.len], &far_verts);
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(near_vb))[0..near_verts.len], &near_verts);
+    gpumem.writeFloats(try dev.mapResource(far_vb), &far_verts);
+    gpumem.writeFloats(try dev.mapResource(near_vb), &near_verts);
 
     const ctx = try dev.createContext();
     defer ctx.deinit();
@@ -1801,10 +1802,10 @@ test "nvidia stencil clip: a REPLACE mask clips a later EQUAL draw on the GPU (s
     const content_v = quad.make(-1, 1, 1, 0, 0);
     const mask_vb = try dev.createResource(.{ .buffer = .{ .size = mask_v.len * 4, .usage = .{ .vertex = true } } });
     defer dev.destroyResource(mask_vb);
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(mask_vb))[0..mask_v.len], &mask_v);
+    gpumem.writeFloats(try dev.mapResource(mask_vb), &mask_v);
     const content_vb = try dev.createResource(.{ .buffer = .{ .size = content_v.len * 4, .usage = .{ .vertex = true } } });
     defer dev.destroyResource(content_vb);
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(content_vb))[0..content_v.len], &content_v);
+    gpumem.writeFloats(try dev.mapResource(content_vb), &content_v);
 
     // The HAL stencil Resource (a u8 buffer): on nvidia it is just the SIGNAL that stencil
     // is active. The driver binds its own internal Z24S8 ZETA.
@@ -1917,9 +1918,9 @@ test "nvidia stencil nested clip: two INCR masks intersect, content shows only t
     defer dev.destroyResource(b_vb);
     const content_vb = try dev.createResource(.{ .buffer = .{ .size = content_v.len * 4, .usage = .{ .vertex = true } } });
     defer dev.destroyResource(content_vb);
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(a_vb))[0..a_v.len], &a_v);
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(b_vb))[0..b_v.len], &b_v);
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(content_vb))[0..content_v.len], &content_v);
+    gpumem.writeFloats(try dev.mapResource(a_vb), &a_v);
+    gpumem.writeFloats(try dev.mapResource(b_vb), &b_v);
+    gpumem.writeFloats(try dev.mapResource(content_vb), &content_v);
 
     const stencil = try dev.createResource(.{ .buffer = .{ .size = W * H } });
     defer dev.destroyResource(stencil);
@@ -2040,9 +2041,9 @@ test "two-sided stencil: front and back faces write DIFFERENT stencil refs, on t
             defer dev.destroyResource(rvb);
             const cvb = try dev.createResource(.{ .buffer = .{ .size = 60, .usage = .{ .vertex = true } } });
             defer dev.destroyResource(cvb);
-            @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(lvb))[0..15], &left);
-            @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(rvb))[0..15], &right);
-            @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(cvb))[0..15], &content);
+            gpumem.writeFloats(try dev.mapResource(lvb), &left);
+            gpumem.writeFloats(try dev.mapResource(rvb), &right);
+            gpumem.writeFloats(try dev.mapResource(cvb), &content);
             const stencil = try dev.createResource(.{ .buffer = .{ .size = W * H } });
             defer dev.destroyResource(stencil);
             const rt = try dev.createResource(.{ .image = .{ .width = W, .height = H, .format = .bgra8_unorm, .usage = .{ .render_target = true } } });
@@ -2151,7 +2152,7 @@ test "nvidia combined depth+stencil: stencil clips AND depth occludes in ONE fra
     const mkvb = struct {
         fn f(d: hal.Device, v: []const f32) !*hal.Resource {
             const b = try d.createResource(.{ .buffer = .{ .size = v.len * 4, .usage = .{ .vertex = true } } });
-            @memcpy(std.mem.bytesAsSlice(f32, try d.mapResource(b))[0..v.len], v);
+            gpumem.writeFloats(try d.mapResource(b), v);
             return b;
         }
     }.f;
@@ -2271,7 +2272,7 @@ test "nvidia depth bias (glPolygonOffset): a negative constant lets a coplanar d
     const mkvb = struct {
         fn f(d: hal.Device, v: []const f32) !*hal.Resource {
             const b = try d.createResource(.{ .buffer = .{ .size = v.len * 4, .usage = .{ .vertex = true } } });
-            @memcpy(std.mem.bytesAsSlice(f32, try d.mapResource(b))[0..v.len], v);
+            gpumem.writeFloats(try d.mapResource(b), v);
             return b;
         }
     }.f;
@@ -2356,7 +2357,7 @@ test "nvidia color write mask (glColorMask): masked channels keep the destinatio
     };
     const vb = try dev.createResource(.{ .buffer = .{ .size = white.len * 4, .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vb);
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vb))[0..white.len], &white);
+    gpumem.writeFloats(try dev.mapResource(vb), &white);
 
     const rt = try dev.createResource(.{ .image = .{ .width = W, .height = H, .format = .bgra8_unorm, .usage = .{ .render_target = true } } });
     defer dev.destroyResource(rt);
@@ -2936,7 +2937,7 @@ test "nvidia line primitive: GL_LINES draws a thin band via the hardware line ra
     const verts = [_]f32{ -0.9, 0.0, 0.9, 0.0 };
     const vbuf = try dev.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(verts)), .usage = .{ .vertex = true } } });
     defer dev.destroyResource(vbuf);
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
 
     const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .r32g32_float, .offset = 0 }};
     const pipe = try dev.createPipeline(.{
@@ -3004,7 +3005,7 @@ test "nvidia gl_PointSize: a larger point renders on the GPU (SPH OMAP_POINT_SIZ
             const verts = [_]f32{ 0.0, 0.0 };
             const vbuf = try d.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(verts)), .usage = .{ .vertex = true } } });
             defer d.destroyResource(vbuf);
-            @memcpy(std.mem.bytesAsSlice(f32, try d.mapResource(vbuf))[0..verts.len], &verts);
+            gpumem.writeFloats(try d.mapResource(vbuf), &verts);
             const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .r32g32_float, .offset = 0 }};
             const pipe = try d.createPipeline(.{
                 .vertex = vs,
@@ -3074,7 +3075,7 @@ test "ORACLE-POINTCOORD: gl_PointCoord matches software on the NVIDIA GPU (point
             const verts = [_]f32{ 0.0, 0.0 };
             const vbuf = try d.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(verts)), .usage = .{ .vertex = true } } });
             defer d.destroyResource(vbuf);
-            @memcpy(std.mem.bytesAsSlice(f32, try d.mapResource(vbuf))[0..verts.len], &verts);
+            gpumem.writeFloats(try d.mapResource(vbuf), &verts);
             const attrs = [_]hal.VertexAttribute{.{ .location = 0, .format = .r32g32_float, .offset = 0 }};
             const pipe = try d.createPipeline(.{
                 .vertex = vs,
@@ -3263,8 +3264,8 @@ test "nvidia depth is PRESERVED across separate submits within a frame (skips wi
     defer dev.destroyResource(near_vb);
     const far_vb = try dev.createResource(.{ .buffer = .{ .size = far_verts.len * 4, .usage = .{ .vertex = true } } });
     defer dev.destroyResource(far_vb);
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(near_vb))[0..near_verts.len], &near_verts);
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(far_vb))[0..far_verts.len], &far_verts);
+    gpumem.writeFloats(try dev.mapResource(near_vb), &near_verts);
+    gpumem.writeFloats(try dev.mapResource(far_vb), &far_verts);
 
     const rt = try dev.createResource(.{ .image = .{ .width = W, .height = H, .format = .bgra8_unorm, .usage = .{ .render_target = true } } });
     defer dev.destroyResource(rt);

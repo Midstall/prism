@@ -11,6 +11,7 @@
 //! init needed). Everything alloced is freed on deinit, matching context.zig.
 
 const std = @import("std");
+const gpumem = @import("gpumem.zig");
 const nvidia = @import("nvidia");
 const hal = @import("../../hal.zig");
 const Resource = @import("resource.zig").Resource;
@@ -212,7 +213,7 @@ test "nvidia CE detile of a block-linear RT == the CPU de-swizzle byte-for-byte 
         -0.5, -0.5, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0,
         0.5,  -0.5, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0,
     };
-    @memcpy(std.mem.bytesAsSlice(f32, try dev.mapResource(vbuf))[0..verts.len], &verts);
+    gpumem.writeFloats(try dev.mapResource(vbuf), &verts);
     const attrs = [_]hal.VertexAttribute{
         .{ .location = 0, .format = .rgba8_unorm, .offset = 0 },
         .{ .location = 1, .format = .rgba8_unorm, .offset = 16 },
@@ -258,7 +259,7 @@ test "nvidia CE detile of a block-linear RT == the CPU de-swizzle byte-for-byte 
     const dst_pitch: u32 = W * 4;
     const dst = try self.allocGpu(.system, @as(u64, dst_pitch) * H);
     defer self.freeGpu(dst);
-    @memset(dst.bytes[0 .. @as(usize, dst_pitch) * H], 0);
+    gpumem.zero(dst.bytes, @as(usize, dst_pitch) * H);
 
     const ce = CopyEngine.create(self) catch return error.SkipZigTest;
     defer ce.deinit();
