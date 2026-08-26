@@ -827,60 +827,71 @@ pub fn rewriteGraphicsQuad(func: *front.Function) !GfxInfo {
 const QO = [*]f32;
 const QP = [*]const u8;
 
-// nb = 0: just quads + output.
-const Q0_0 = *const fn (QO) callconv(.c) void;
-const Q1_0 = *const fn (Quad, QO) callconv(.c) void;
-const Q2_0 = *const fn (Quad, Quad, QO) callconv(.c) void;
-const Q3_0 = *const fn (Quad, Quad, Quad, QO) callconv(.c) void;
-const Q4_0 = *const fn (Quad, Quad, Quad, Quad, QO) callconv(.c) void;
-const Q5_0 = *const fn (Quad, Quad, Quad, Quad, Quad, QO) callconv(.c) void;
-const Q6_0 = *const fn (Quad, Quad, Quad, Quad, Quad, Quad, QO) callconv(.c) void;
-const Q7_0 = *const fn (Quad, Quad, Quad, Quad, Quad, Quad, Quad, QO) callconv(.c) void;
-const Q8_0 = *const fn (Quad, Quad, Quad, Quad, Quad, Quad, Quad, Quad, QO) callconv(.c) void;
+/// The most value inputs a JITed graphics entry can be called with.
+///
+/// Each input is one call parameter. AArch64's C ABI passes the first eight
+/// floats in v0..v7 and every one after that on the stack, and vulcan's code
+/// generator follows the ABI, so the count is NOT limited by the machine. It is
+/// limited by how many concrete signatures this file offers to call through.
+///
+/// That number used to be eight, which is exactly a vec2 plus a vec2 plus a
+/// vec4. One attribute more and the call reported `TooManyInputs`, and because
+/// every caller in `raster.zig` drops the error and moves on (`catch return`),
+/// the draw produced NOTHING, with no diagnostic anywhere. A whole frame came
+/// back the colour it was cleared to. phantom's rounded-rect shader, which takes
+/// twelve, is what found it: its images and its text drew correctly because both
+/// sit at exactly eight.
+///
+/// Sixteen leaves room for four vec4s and is what a caller can rely on. Beyond
+/// it the error is still the honest answer.
+pub const max_gfx_inputs: usize = 16;
 
-// nb = 1.
-const Q0_1 = *const fn (QP, QO) callconv(.c) void;
-const Q1_1 = *const fn (Quad, QP, QO) callconv(.c) void;
-const Q2_1 = *const fn (Quad, Quad, QP, QO) callconv(.c) void;
-const Q3_1 = *const fn (Quad, Quad, Quad, QP, QO) callconv(.c) void;
-const Q4_1 = *const fn (Quad, Quad, Quad, Quad, QP, QO) callconv(.c) void;
-const Q5_1 = *const fn (Quad, Quad, Quad, Quad, Quad, QP, QO) callconv(.c) void;
-const Q6_1 = *const fn (Quad, Quad, Quad, Quad, Quad, Quad, QP, QO) callconv(.c) void;
-const Q7_1 = *const fn (Quad, Quad, Quad, Quad, Quad, Quad, Quad, QP, QO) callconv(.c) void;
-const Q8_1 = *const fn (Quad, Quad, Quad, Quad, Quad, Quad, Quad, Quad, QP, QO) callconv(.c) void;
+/// The C ABI signature of a JITed graphics entry: `nf` value parameters, then
+/// `nb` pointer parameters, then the output pointer.
+///
+/// Built here rather than written out. One table for each value type is
+/// `(max_gfx_inputs + 1) * (GfxBuffers.max + 1)` entries, and the pair of them
+/// spelled by hand is what pinned the limit at eight for as long as it held.
+fn GfxSig(comptime Value: type, comptime Ptr: type, comptime Out: type, comptime nf: usize, comptime nb: usize) type {
+    @setEvalBranchQuota(100_000);
+    const types = comptime blk: {
+        var t: [nf + nb + 1]type = undefined;
+        for (t[0..nf]) |*e| e.* = Value;
+        for (t[nf..][0..nb]) |*e| e.* = Ptr;
+        t[nf + nb] = Out;
+        break :blk t;
+    };
+    const attrs: [nf + nb + 1]std.builtin.Type.Fn.Param.Attributes = @splat(.{});
+    return *const @Fn(&types, &attrs, void, .{ .@"callconv" = .c });
+}
 
-// nb = 2.
-const Q0_2 = *const fn (QP, QP, QO) callconv(.c) void;
-const Q1_2 = *const fn (Quad, QP, QP, QO) callconv(.c) void;
-const Q2_2 = *const fn (Quad, Quad, QP, QP, QO) callconv(.c) void;
-const Q3_2 = *const fn (Quad, Quad, Quad, QP, QP, QO) callconv(.c) void;
-const Q4_2 = *const fn (Quad, Quad, Quad, Quad, QP, QP, QO) callconv(.c) void;
-const Q5_2 = *const fn (Quad, Quad, Quad, Quad, Quad, QP, QP, QO) callconv(.c) void;
-const Q6_2 = *const fn (Quad, Quad, Quad, Quad, Quad, Quad, QP, QP, QO) callconv(.c) void;
-const Q7_2 = *const fn (Quad, Quad, Quad, Quad, Quad, Quad, Quad, QP, QP, QO) callconv(.c) void;
-const Q8_2 = *const fn (Quad, Quad, Quad, Quad, Quad, Quad, Quad, Quad, QP, QP, QO) callconv(.c) void;
+/// Call `f` with the first `nf` of `values`, then the first `nb` of `ptrs`, then
+/// `out`, matching the signature `GfxSig` built.
+fn invokeGfx(
+    comptime Sig: type,
+    comptime nf: usize,
+    comptime nb: usize,
+    f: Sig,
+    values: anytype,
+    ptrs: anytype,
+    out: anytype,
+) void {
+    var args: std.meta.ArgsTuple(@typeInfo(Sig).pointer.child) = undefined;
+    inline for (0..nf) |i| args[i] = values[i];
+    inline for (0..nb) |i| args[nf + i] = ptrs[i];
+    args[nf + nb] = out;
+    @call(.auto, f, args);
+}
 
-// nb = 3.
-const Q0_3 = *const fn (QP, QP, QP, QO) callconv(.c) void;
-const Q1_3 = *const fn (Quad, QP, QP, QP, QO) callconv(.c) void;
-const Q2_3 = *const fn (Quad, Quad, QP, QP, QP, QO) callconv(.c) void;
-const Q3_3 = *const fn (Quad, Quad, Quad, QP, QP, QP, QO) callconv(.c) void;
-const Q4_3 = *const fn (Quad, Quad, Quad, Quad, QP, QP, QP, QO) callconv(.c) void;
-const Q5_3 = *const fn (Quad, Quad, Quad, Quad, Quad, QP, QP, QP, QO) callconv(.c) void;
-const Q6_3 = *const fn (Quad, Quad, Quad, Quad, Quad, Quad, QP, QP, QP, QO) callconv(.c) void;
-const Q7_3 = *const fn (Quad, Quad, Quad, Quad, Quad, Quad, Quad, QP, QP, QP, QO) callconv(.c) void;
-const Q8_3 = *const fn (Quad, Quad, Quad, Quad, Quad, Quad, Quad, Quad, QP, QP, QP, QO) callconv(.c) void;
-
-// nb = 4 (vkcube: sampler desc + sampler_fn + grad_buf + math_fn).
-const Q0_4 = *const fn (QP, QP, QP, QP, QO) callconv(.c) void;
-const Q1_4 = *const fn (Quad, QP, QP, QP, QP, QO) callconv(.c) void;
-const Q2_4 = *const fn (Quad, Quad, QP, QP, QP, QP, QO) callconv(.c) void;
-const Q3_4 = *const fn (Quad, Quad, Quad, QP, QP, QP, QP, QO) callconv(.c) void;
-const Q4_4 = *const fn (Quad, Quad, Quad, Quad, QP, QP, QP, QP, QO) callconv(.c) void;
-const Q5_4 = *const fn (Quad, Quad, Quad, Quad, Quad, QP, QP, QP, QP, QO) callconv(.c) void;
-const Q6_4 = *const fn (Quad, Quad, Quad, Quad, Quad, Quad, QP, QP, QP, QP, QO) callconv(.c) void;
-const Q7_4 = *const fn (Quad, Quad, Quad, Quad, Quad, Quad, Quad, QP, QP, QP, QP, QO) callconv(.c) void;
-const Q8_4 = *const fn (Quad, Quad, Quad, Quad, Quad, Quad, Quad, Quad, QP, QP, QP, QP, QO) callconv(.c) void;
+/// The buffer pointers a graphics entry takes, with every unused slot filled by
+/// a benign non-null address. A JITed entry never dereferences a slot its shader
+/// did not ask for, and a null there would still have to be passed.
+fn gfxPtrs(comptime Ptr: type, bufs: []const ?[*]const u8) [GfxBuffers.max]Ptr {
+    const dummy: Ptr = @ptrFromInt(0x1000);
+    var out: [GfxBuffers.max]Ptr = @splat(dummy);
+    for (0..@min(bufs.len, GfxBuffers.max)) |i| out[i] = bufs[i] orelse dummy;
+    return out;
+}
 
 /// Invoke a JITed 4-wide quad FS through a PRE-RESOLVED entry address (`entry_ptr`, from
 /// `mainEntry`). `n` quad inputs from `inputs` go in v0.. (each a `<4 x f32>` of the quad's
@@ -888,73 +899,15 @@ const Q8_4 = *const fn (Quad, Quad, Quad, Quad, Quad, Quad, Quad, Quad, QP, QP, 
 /// `bufs` go in x0.. (a null slot passes a benign non-null dummy, matching the scalar path).
 /// `qout` is the 16-f32 component-major output buffer (out[c*4 + lane]).
 pub fn runGraphicsQuadAt(entry_ptr: *const anyopaque, n: usize, nb: usize, inputs: []const Quad, bufs: []const ?[*]const u8, qout: QO) !void {
-    if (n > 8 or nb > 4) return error.TooManyInputs;
+    if (n > max_gfx_inputs or nb > GfxBuffers.max) return error.TooManyInputs;
     const fnptr: *align(@alignOf(fn () callconv(.c) void)) const anyopaque = @alignCast(entry_ptr);
-    const I = inputs;
-    const dummy: QP = @ptrFromInt(0x1000);
-    const b0: QP = if (bufs.len > 0) (bufs[0] orelse dummy) else dummy;
-    const b1: QP = if (bufs.len > 1) (bufs[1] orelse dummy) else dummy;
-    const b2: QP = if (bufs.len > 2) (bufs[2] orelse dummy) else dummy;
-    const b3: QP = if (bufs.len > 3) (bufs[3] orelse dummy) else dummy;
+    const ptrs = gfxPtrs(QP, bufs);
     switch (nb) {
-        0 => switch (n) {
-            0 => @as(Q0_0, @ptrCast(fnptr))(qout),
-            1 => @as(Q1_0, @ptrCast(fnptr))(I[0], qout),
-            2 => @as(Q2_0, @ptrCast(fnptr))(I[0], I[1], qout),
-            3 => @as(Q3_0, @ptrCast(fnptr))(I[0], I[1], I[2], qout),
-            4 => @as(Q4_0, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], qout),
-            5 => @as(Q5_0, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], qout),
-            6 => @as(Q6_0, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], qout),
-            7 => @as(Q7_0, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], qout),
-            8 => @as(Q8_0, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], I[7], qout),
-            else => return error.TooManyInputs,
-        },
-        1 => switch (n) {
-            0 => @as(Q0_1, @ptrCast(fnptr))(b0, qout),
-            1 => @as(Q1_1, @ptrCast(fnptr))(I[0], b0, qout),
-            2 => @as(Q2_1, @ptrCast(fnptr))(I[0], I[1], b0, qout),
-            3 => @as(Q3_1, @ptrCast(fnptr))(I[0], I[1], I[2], b0, qout),
-            4 => @as(Q4_1, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], b0, qout),
-            5 => @as(Q5_1, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], b0, qout),
-            6 => @as(Q6_1, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], b0, qout),
-            7 => @as(Q7_1, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], b0, qout),
-            8 => @as(Q8_1, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], I[7], b0, qout),
-            else => return error.TooManyInputs,
-        },
-        2 => switch (n) {
-            0 => @as(Q0_2, @ptrCast(fnptr))(b0, b1, qout),
-            1 => @as(Q1_2, @ptrCast(fnptr))(I[0], b0, b1, qout),
-            2 => @as(Q2_2, @ptrCast(fnptr))(I[0], I[1], b0, b1, qout),
-            3 => @as(Q3_2, @ptrCast(fnptr))(I[0], I[1], I[2], b0, b1, qout),
-            4 => @as(Q4_2, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], b0, b1, qout),
-            5 => @as(Q5_2, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], b0, b1, qout),
-            6 => @as(Q6_2, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], b0, b1, qout),
-            7 => @as(Q7_2, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], b0, b1, qout),
-            8 => @as(Q8_2, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], I[7], b0, b1, qout),
-            else => return error.TooManyInputs,
-        },
-        3 => switch (n) {
-            0 => @as(Q0_3, @ptrCast(fnptr))(b0, b1, b2, qout),
-            1 => @as(Q1_3, @ptrCast(fnptr))(I[0], b0, b1, b2, qout),
-            2 => @as(Q2_3, @ptrCast(fnptr))(I[0], I[1], b0, b1, b2, qout),
-            3 => @as(Q3_3, @ptrCast(fnptr))(I[0], I[1], I[2], b0, b1, b2, qout),
-            4 => @as(Q4_3, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], b0, b1, b2, qout),
-            5 => @as(Q5_3, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], b0, b1, b2, qout),
-            6 => @as(Q6_3, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], b0, b1, b2, qout),
-            7 => @as(Q7_3, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], b0, b1, b2, qout),
-            8 => @as(Q8_3, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], I[7], b0, b1, b2, qout),
-            else => return error.TooManyInputs,
-        },
-        4 => switch (n) {
-            0 => @as(Q0_4, @ptrCast(fnptr))(b0, b1, b2, b3, qout),
-            1 => @as(Q1_4, @ptrCast(fnptr))(I[0], b0, b1, b2, b3, qout),
-            2 => @as(Q2_4, @ptrCast(fnptr))(I[0], I[1], b0, b1, b2, b3, qout),
-            3 => @as(Q3_4, @ptrCast(fnptr))(I[0], I[1], I[2], b0, b1, b2, b3, qout),
-            4 => @as(Q4_4, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], b0, b1, b2, b3, qout),
-            5 => @as(Q5_4, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], b0, b1, b2, b3, qout),
-            6 => @as(Q6_4, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], b0, b1, b2, b3, qout),
-            7 => @as(Q7_4, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], b0, b1, b2, b3, qout),
-            8 => @as(Q8_4, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], I[7], b0, b1, b2, b3, qout),
+        inline 0...GfxBuffers.max => |NB| switch (n) {
+            inline 0...max_gfx_inputs => |N| {
+                const Sig = GfxSig(Quad, QP, QO, N, NB);
+                invokeGfx(Sig, N, NB, @as(Sig, @ptrCast(fnptr)), inputs, ptrs, qout);
+            },
             else => return error.TooManyInputs,
         },
         else => return error.TooManyInputs,
@@ -974,39 +927,6 @@ pub fn runGraphicsQuadAt(entry_ptr: *const anyopaque, n: usize, nb: usize, input
 // (multiple UBOs in one graphics shader is a documented later limit).
 const P = [*]const u8;
 const O = [*]f32;
-
-// nb = 0 (no bound buffers): nf floats + the output pointer.
-const G0_0 = *const fn (O) callconv(.c) void;
-const G1_0 = *const fn (f32, O) callconv(.c) void;
-const G2_0 = *const fn (f32, f32, O) callconv(.c) void;
-const G3_0 = *const fn (f32, f32, f32, O) callconv(.c) void;
-const G4_0 = *const fn (f32, f32, f32, f32, O) callconv(.c) void;
-const G5_0 = *const fn (f32, f32, f32, f32, f32, O) callconv(.c) void;
-const G6_0 = *const fn (f32, f32, f32, f32, f32, f32, O) callconv(.c) void;
-const G7_0 = *const fn (f32, f32, f32, f32, f32, f32, f32, O) callconv(.c) void;
-const G8_0 = *const fn (f32, f32, f32, f32, f32, f32, f32, f32, O) callconv(.c) void;
-
-// nb = 1: nf floats + one buffer pointer + the output pointer.
-const G0_1 = *const fn (P, O) callconv(.c) void;
-const G1_1 = *const fn (f32, P, O) callconv(.c) void;
-const G2_1 = *const fn (f32, f32, P, O) callconv(.c) void;
-const G3_1 = *const fn (f32, f32, f32, P, O) callconv(.c) void;
-const G4_1 = *const fn (f32, f32, f32, f32, P, O) callconv(.c) void;
-const G5_1 = *const fn (f32, f32, f32, f32, f32, P, O) callconv(.c) void;
-const G6_1 = *const fn (f32, f32, f32, f32, f32, f32, P, O) callconv(.c) void;
-const G7_1 = *const fn (f32, f32, f32, f32, f32, f32, f32, P, O) callconv(.c) void;
-const G8_1 = *const fn (f32, f32, f32, f32, f32, f32, f32, f32, P, O) callconv(.c) void;
-
-// nb = 2: nf floats + two buffer pointers + the output pointer.
-const G0_2 = *const fn (P, P, O) callconv(.c) void;
-const G1_2 = *const fn (f32, P, P, O) callconv(.c) void;
-const G2_2 = *const fn (f32, f32, P, P, O) callconv(.c) void;
-const G3_2 = *const fn (f32, f32, f32, P, P, O) callconv(.c) void;
-const G4_2 = *const fn (f32, f32, f32, f32, P, P, O) callconv(.c) void;
-const G5_2 = *const fn (f32, f32, f32, f32, f32, P, P, O) callconv(.c) void;
-const G6_2 = *const fn (f32, f32, f32, f32, f32, f32, P, P, O) callconv(.c) void;
-const G7_2 = *const fn (f32, f32, f32, f32, f32, f32, f32, P, P, O) callconv(.c) void;
-const G8_2 = *const fn (f32, f32, f32, f32, f32, f32, f32, f32, P, P, O) callconv(.c) void;
 
 // nb = 3: nf floats + three buffer/sampler pointers + the output pointer. The third
 // pointer is typically the host sampler_fn (a texturing FS = a sampler descriptor + the
@@ -1062,75 +982,17 @@ pub fn mainEntry(compiled: *const native.JittedModule) ?*const anyopaque {
 /// is the per-fragment hot path: the rasterizer resolves `fnptr` once per pipeline and calls
 /// this for each covered fragment. Same ABI and arity dispatch as `runGraphics`.
 pub fn runGraphicsAt(entry_ptr: *const anyopaque, n: usize, nb: usize, inputs: []const f32, bufs: []const ?[*]const u8, out: O) !void {
-    if (n > 8 or nb > 4) return error.TooManyInputs;
+    if (n > max_gfx_inputs or nb > GfxBuffers.max) return error.TooManyInputs;
     // The JIT code address is function-aligned. Re-establish that alignment so the
     // fn-pointer casts below don't trip @ptrCast's alignment check (anyopaque is align 1).
     const fnptr: *align(@alignOf(fn () callconv(.c) void)) const anyopaque = @alignCast(entry_ptr);
-    const I = inputs;
-    const dummy: P = @ptrFromInt(0x1000);
-    const b0: P = if (bufs.len > 0) (bufs[0] orelse dummy) else dummy;
-    const b1: P = if (bufs.len > 1) (bufs[1] orelse dummy) else dummy;
-    const b2: P = if (bufs.len > 2) (bufs[2] orelse dummy) else dummy;
-    const b3: P = if (bufs.len > 3) (bufs[3] orelse dummy) else dummy;
+    const ptrs = gfxPtrs(P, bufs);
     switch (nb) {
-        0 => switch (n) {
-            0 => @as(G0_0, @ptrCast(fnptr))(out),
-            1 => @as(G1_0, @ptrCast(fnptr))(I[0], out),
-            2 => @as(G2_0, @ptrCast(fnptr))(I[0], I[1], out),
-            3 => @as(G3_0, @ptrCast(fnptr))(I[0], I[1], I[2], out),
-            4 => @as(G4_0, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], out),
-            5 => @as(G5_0, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], out),
-            6 => @as(G6_0, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], out),
-            7 => @as(G7_0, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], out),
-            8 => @as(G8_0, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], I[7], out),
-            else => return error.TooManyInputs,
-        },
-        1 => switch (n) {
-            0 => @as(G0_1, @ptrCast(fnptr))(b0, out),
-            1 => @as(G1_1, @ptrCast(fnptr))(I[0], b0, out),
-            2 => @as(G2_1, @ptrCast(fnptr))(I[0], I[1], b0, out),
-            3 => @as(G3_1, @ptrCast(fnptr))(I[0], I[1], I[2], b0, out),
-            4 => @as(G4_1, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], b0, out),
-            5 => @as(G5_1, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], b0, out),
-            6 => @as(G6_1, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], b0, out),
-            7 => @as(G7_1, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], b0, out),
-            8 => @as(G8_1, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], I[7], b0, out),
-            else => return error.TooManyInputs,
-        },
-        2 => switch (n) {
-            0 => @as(G0_2, @ptrCast(fnptr))(b0, b1, out),
-            1 => @as(G1_2, @ptrCast(fnptr))(I[0], b0, b1, out),
-            2 => @as(G2_2, @ptrCast(fnptr))(I[0], I[1], b0, b1, out),
-            3 => @as(G3_2, @ptrCast(fnptr))(I[0], I[1], I[2], b0, b1, out),
-            4 => @as(G4_2, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], b0, b1, out),
-            5 => @as(G5_2, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], b0, b1, out),
-            6 => @as(G6_2, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], b0, b1, out),
-            7 => @as(G7_2, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], b0, b1, out),
-            8 => @as(G8_2, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], I[7], b0, b1, out),
-            else => return error.TooManyInputs,
-        },
-        3 => switch (n) {
-            0 => @as(G0_3, @ptrCast(fnptr))(b0, b1, b2, out),
-            1 => @as(G1_3, @ptrCast(fnptr))(I[0], b0, b1, b2, out),
-            2 => @as(G2_3, @ptrCast(fnptr))(I[0], I[1], b0, b1, b2, out),
-            3 => @as(G3_3, @ptrCast(fnptr))(I[0], I[1], I[2], b0, b1, b2, out),
-            4 => @as(G4_3, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], b0, b1, b2, out),
-            5 => @as(G5_3, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], b0, b1, b2, out),
-            6 => @as(G6_3, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], b0, b1, b2, out),
-            7 => @as(G7_3, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], b0, b1, b2, out),
-            8 => @as(G8_3, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], I[7], b0, b1, b2, out),
-            else => return error.TooManyInputs,
-        },
-        4 => switch (n) {
-            0 => @as(G0_4, @ptrCast(fnptr))(b0, b1, b2, b3, out),
-            1 => @as(G1_4, @ptrCast(fnptr))(I[0], b0, b1, b2, b3, out),
-            2 => @as(G2_4, @ptrCast(fnptr))(I[0], I[1], b0, b1, b2, b3, out),
-            3 => @as(G3_4, @ptrCast(fnptr))(I[0], I[1], I[2], b0, b1, b2, b3, out),
-            4 => @as(G4_4, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], b0, b1, b2, b3, out),
-            5 => @as(G5_4, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], b0, b1, b2, b3, out),
-            6 => @as(G6_4, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], b0, b1, b2, b3, out),
-            7 => @as(G7_4, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], b0, b1, b2, b3, out),
-            8 => @as(G8_4, @ptrCast(fnptr))(I[0], I[1], I[2], I[3], I[4], I[5], I[6], I[7], b0, b1, b2, b3, out),
+        inline 0...GfxBuffers.max => |NB| switch (n) {
+            inline 0...max_gfx_inputs => |N| {
+                const Sig = GfxSig(f32, P, O, N, NB);
+                invokeGfx(Sig, N, NB, @as(Sig, @ptrCast(fnptr)), inputs, ptrs, out);
+            },
             else => return error.TooManyInputs,
         },
         else => return error.TooManyInputs,
@@ -1181,78 +1043,15 @@ pub fn runGraphicsPulling(compiled: *const native.JittedModule, ni: usize, nb: u
 /// in x0..; `out` is the appended output-buffer pointer. A null/unbound buffer slot
 /// passes a benign non-null pointer (the shader must not read an unbound buffer).
 pub fn runGraphics(compiled: *const native.JittedModule, n: usize, nb: usize, inputs: []const f32, bufs: []const ?[*]const u8, out: O) !void {
-    if (n > 8 or nb > 4) return error.TooManyInputs; // nb<=4: sampler desc + sampler_fn + grad_buf + math_fn
-    const I = inputs;
-    const dummy: P = @ptrFromInt(0x1000);
-    const b0: P = if (bufs.len > 0) (bufs[0] orelse dummy) else dummy;
-    const b1: P = if (bufs.len > 1) (bufs[1] orelse dummy) else dummy;
-    const b2: P = if (bufs.len > 2) (bufs[2] orelse dummy) else dummy;
-    const b3: P = if (bufs.len > 3) (bufs[3] orelse dummy) else dummy;
-    const c = compiled;
-    const fp = struct {
-        fn get(comptime T: type, cc: *const native.JittedModule) ?T {
-            return cc.entry(T, "main");
-        }
-    }.get;
+    if (n > max_gfx_inputs or nb > GfxBuffers.max) return error.TooManyInputs;
+    const ptrs = gfxPtrs(P, bufs);
     switch (nb) {
-        0 => switch (n) {
-            0 => (fp(G0_0, c) orelse return error.NoEntry)(out),
-            1 => (fp(G1_0, c) orelse return error.NoEntry)(I[0], out),
-            2 => (fp(G2_0, c) orelse return error.NoEntry)(I[0], I[1], out),
-            3 => (fp(G3_0, c) orelse return error.NoEntry)(I[0], I[1], I[2], out),
-            4 => (fp(G4_0, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], out),
-            5 => (fp(G5_0, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], out),
-            6 => (fp(G6_0, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], I[5], out),
-            7 => (fp(G7_0, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], I[5], I[6], out),
-            8 => (fp(G8_0, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], I[5], I[6], I[7], out),
-            else => return error.TooManyInputs,
-        },
-        1 => switch (n) {
-            0 => (fp(G0_1, c) orelse return error.NoEntry)(b0, out),
-            1 => (fp(G1_1, c) orelse return error.NoEntry)(I[0], b0, out),
-            2 => (fp(G2_1, c) orelse return error.NoEntry)(I[0], I[1], b0, out),
-            3 => (fp(G3_1, c) orelse return error.NoEntry)(I[0], I[1], I[2], b0, out),
-            4 => (fp(G4_1, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], b0, out),
-            5 => (fp(G5_1, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], b0, out),
-            6 => (fp(G6_1, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], I[5], b0, out),
-            7 => (fp(G7_1, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], I[5], I[6], b0, out),
-            8 => (fp(G8_1, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], I[5], I[6], I[7], b0, out),
-            else => return error.TooManyInputs,
-        },
-        2 => switch (n) {
-            0 => (fp(G0_2, c) orelse return error.NoEntry)(b0, b1, out),
-            1 => (fp(G1_2, c) orelse return error.NoEntry)(I[0], b0, b1, out),
-            2 => (fp(G2_2, c) orelse return error.NoEntry)(I[0], I[1], b0, b1, out),
-            3 => (fp(G3_2, c) orelse return error.NoEntry)(I[0], I[1], I[2], b0, b1, out),
-            4 => (fp(G4_2, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], b0, b1, out),
-            5 => (fp(G5_2, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], b0, b1, out),
-            6 => (fp(G6_2, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], I[5], b0, b1, out),
-            7 => (fp(G7_2, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], I[5], I[6], b0, b1, out),
-            8 => (fp(G8_2, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], I[5], I[6], I[7], b0, b1, out),
-            else => return error.TooManyInputs,
-        },
-        3 => switch (n) {
-            0 => (fp(G0_3, c) orelse return error.NoEntry)(b0, b1, b2, out),
-            1 => (fp(G1_3, c) orelse return error.NoEntry)(I[0], b0, b1, b2, out),
-            2 => (fp(G2_3, c) orelse return error.NoEntry)(I[0], I[1], b0, b1, b2, out),
-            3 => (fp(G3_3, c) orelse return error.NoEntry)(I[0], I[1], I[2], b0, b1, b2, out),
-            4 => (fp(G4_3, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], b0, b1, b2, out),
-            5 => (fp(G5_3, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], b0, b1, b2, out),
-            6 => (fp(G6_3, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], I[5], b0, b1, b2, out),
-            7 => (fp(G7_3, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], I[5], I[6], b0, b1, b2, out),
-            8 => (fp(G8_3, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], I[5], I[6], I[7], b0, b1, b2, out),
-            else => return error.TooManyInputs,
-        },
-        4 => switch (n) {
-            0 => (fp(G0_4, c) orelse return error.NoEntry)(b0, b1, b2, b3, out),
-            1 => (fp(G1_4, c) orelse return error.NoEntry)(I[0], b0, b1, b2, b3, out),
-            2 => (fp(G2_4, c) orelse return error.NoEntry)(I[0], I[1], b0, b1, b2, b3, out),
-            3 => (fp(G3_4, c) orelse return error.NoEntry)(I[0], I[1], I[2], b0, b1, b2, b3, out),
-            4 => (fp(G4_4, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], b0, b1, b2, b3, out),
-            5 => (fp(G5_4, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], b0, b1, b2, b3, out),
-            6 => (fp(G6_4, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], I[5], b0, b1, b2, b3, out),
-            7 => (fp(G7_4, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], I[5], I[6], b0, b1, b2, b3, out),
-            8 => (fp(G8_4, c) orelse return error.NoEntry)(I[0], I[1], I[2], I[3], I[4], I[5], I[6], I[7], b0, b1, b2, b3, out),
+        inline 0...GfxBuffers.max => |NB| switch (n) {
+            inline 0...max_gfx_inputs => |N| {
+                const Sig = GfxSig(f32, P, O, N, NB);
+                const f = compiled.entry(Sig, "main") orelse return error.NoEntry;
+                invokeGfx(Sig, N, NB, f, inputs, ptrs, out);
+            },
             else => return error.TooManyInputs,
         },
         else => return error.TooManyInputs,
@@ -2438,4 +2237,79 @@ test "control flow: a FS vector loop-carried accumulator JITs + runs (vector phi
     try std.testing.expectApproxEqAbs(@as(f32, 0.3), out[0], 1e-4);
     try std.testing.expectApproxEqAbs(@as(f32, 0.6), out[1], 1e-4);
     try std.testing.expectApproxEqAbs(@as(f32, 0.15), out[2], 1e-4);
+}
+
+test "a graphics entry takes more than eight inputs, in order" {
+    // Eight is where the signature table used to stop, and it is exactly a vec2
+    // plus a vec2 plus a vec4. A vertex shader with one attribute more reported
+    // `TooManyInputs`, and every caller in `raster.zig` drops that error, so the
+    // draw silently produced an empty frame. phantom's rounded-rect shader takes
+    // twelve, which is how it was found.
+    //
+    // A native function stands in for a JITed one: the dispatch and the C ABI are
+    // the same either way, and this is the part that was broken. Twelve also
+    // reaches past AArch64's eight SIMD argument registers, so inputs 9 to 12
+    // arrive on the stack, which is the case worth pinning.
+    const Entry = struct {
+        fn f(
+            a0: f32,
+            a1: f32,
+            a2: f32,
+            a3: f32,
+            a4: f32,
+            a5: f32,
+            a6: f32,
+            a7: f32,
+            a8: f32,
+            a9: f32,
+            a10: f32,
+            a11: f32,
+            out: O,
+        ) callconv(.c) void {
+            const all = [_]f32{ a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11 };
+            for (all, 0..) |v, i| out[i] = v;
+        }
+    };
+
+    const inputs = [_]f32{ 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21 };
+    var out = [_]f32{0} ** 12;
+    // Every input is distinct, so a signature that dropped one or swapped two
+    // fails here rather than passing on a sum that happens to match.
+    try runGraphicsAt(@ptrCast(&Entry.f), inputs.len, 0, &inputs, &.{}, &out);
+    try std.testing.expectEqualSlices(f32, &inputs, &out);
+}
+
+test "a graphics entry past the limit reports it rather than drawing nothing" {
+    // The limit still exists; it is just no longer eight. Past it the error is
+    // the honest answer, and a caller that swallows it draws nothing, which is
+    // the failure this whole path is about.
+    const Entry = struct {
+        fn f(out: O) callconv(.c) void {
+            out[0] = 1;
+        }
+    };
+    const inputs = [_]f32{0} ** (max_gfx_inputs + 1);
+    var out = [_]f32{0};
+    try std.testing.expectError(
+        error.TooManyInputs,
+        runGraphicsAt(@ptrCast(&Entry.f), inputs.len, 0, &inputs, &.{}, &out),
+    );
+}
+
+test "a quad entry takes more than eight inputs too" {
+    // The fragment side has the same table and the same limit. phantom's
+    // rounded-rect fragment shader takes ten varyings, so fixing only the vertex
+    // side would have moved the blank frame one stage along.
+    const Entry = struct {
+        fn f(q0: Quad, q1: Quad, q2: Quad, q3: Quad, q4: Quad, q5: Quad, q6: Quad, q7: Quad, q8: Quad, q9: Quad, out: QO) callconv(.c) void {
+            const all = [_]Quad{ q0, q1, q2, q3, q4, q5, q6, q7, q8, q9 };
+            for (all, 0..) |q, i| out[i] = q[0];
+        }
+    };
+
+    var inputs: [10]Quad = undefined;
+    for (&inputs, 0..) |*q, i| q.* = @splat(@floatFromInt(i + 30));
+    var out = [_]f32{0} ** 10;
+    try runGraphicsQuadAt(@ptrCast(&Entry.f), inputs.len, 0, &inputs, &.{}, &out);
+    for (out, 0..) |v, i| try std.testing.expectEqual(@as(f32, @floatFromInt(i + 30)), v);
 }

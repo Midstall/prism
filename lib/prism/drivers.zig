@@ -44,16 +44,113 @@ pub const Selected = struct { driver: Driver, device: driver.Device };
 
 /// Bring up the best driver that actually works: walk the drivers in preference
 /// order (hardware first, software last), skip the unavailable, and return the
-/// first whose createDevice succeeds. Stub drivers (createDevice unimplemented)
-/// are skipped automatically. The caller owns and must deinit the device.
-/// Returns null only when no driver can start, not even the software fallback.
+/// first that starts AND draws.
+///
+/// Drawing is checked, not assumed. This used to return the first driver whose
+/// `createDevice` succeeded, which is a weaker question than it looks: a
+/// compute-only driver starts perfectly well and then rejects the first graphics
+/// pipeline built on it. See `canDraw`.
+///
+/// The caller owns and must deinit the device. Returns null when no driver can
+/// draw here, not even the software fallback.
 pub fn createBestDevice(gpa: std.mem.Allocator) ?Selected {
     for (all) |d| {
         if (!d.isAvailable()) continue;
         const dev = d.createDevice(gpa) catch continue;
+        if (!canDraw(gpa, dev)) {
+            dev.deinit();
+            continue;
+        }
         return .{ .driver = d, .device = dev };
     }
     return null;
+}
+
+/// Whether `dev` can put geometry on a render target, rather than merely start.
+///
+/// Starting says almost nothing. The apple driver starts on any Asahi machine
+/// because it is compute-capable, and then rejects every vertex and fragment
+/// module at `createShaderModule` (see `drivers/apple/shader.zig`, where the
+/// graphics path is a documented open item). A caller that took the first
+/// driver to start got that one, never reached the software rasterizer behind
+/// it, and failed at the first pipeline it built.
+///
+/// So this asks the only question that separates them: draw one triangle over a
+/// contrasting background and read the middle pixel back. An error anywhere
+/// along the way is an answer too, and the answer is no.
+///
+/// It costs a shader compile and a JIT per candidate, once per process. That is
+/// worth more than handing back a device that cannot draw.
+fn canDraw(gpa: std.mem.Allocator, dev: driver.Device) bool {
+    return probeDraw(gpa, dev) catch false;
+}
+
+fn probeDraw(gpa: std.mem.Allocator, dev: driver.Device) !bool {
+    const glsl = @import("glsl.zig");
+
+    const vs_src =
+        \\attribute vec2 aPos;
+        \\void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
+    ;
+    const fs_src =
+        \\precision mediump float;
+        \\void main() { gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); }
+    ;
+
+    const vs_spirv = try glsl.compileForStage(gpa, vs_src, .vertex);
+    defer gpa.free(vs_spirv);
+    const fs_spirv = try glsl.compileForStage(gpa, fs_src, .fragment);
+    defer gpa.free(fs_spirv);
+
+    const vs = try dev.createShaderModule(.{ .stage = .vertex, .code = vs_spirv });
+    defer dev.destroyShaderModule(vs);
+    const fs = try dev.createShaderModule(.{ .stage = .fragment, .code = fs_spirv });
+    defer dev.destroyShaderModule(fs);
+
+    const pipeline = try dev.createPipeline(.{
+        .vertex = vs,
+        .fragment = fs,
+        .vertex_layout = .{
+            .stride = @sizeOf([2]f32),
+            .attributes = &.{.{ .location = 0, .format = .r32g32_float, .offset = 0 }},
+        },
+        .color_format = .rgba8_unorm,
+    });
+    defer dev.destroyPipeline(pipeline);
+
+    // One triangle big enough to cover the whole target, so the middle pixel is
+    // inside it whichever way the rasterizer rounds.
+    const verts = [_][2]f32{ .{ -1, -1 }, .{ 3, -1 }, .{ -1, 3 } };
+    const vbuf = try dev.createResource(.{ .buffer = .{ .size = @sizeOf(@TypeOf(verts)), .usage = .{ .vertex = true } } });
+    defer dev.destroyResource(vbuf);
+    @memcpy(try dev.mapResource(vbuf), std.mem.sliceAsBytes(verts[0..]));
+
+    const size: u32 = 8;
+    const target = try dev.createResource(.{ .image = .{
+        .width = size,
+        .height = size,
+        .format = .rgba8_unorm,
+        .usage = .{ .render_target = true },
+    } });
+    defer dev.destroyResource(target);
+
+    const ctx = try dev.createContext();
+    defer ctx.deinit();
+    const cb = try ctx.beginCommands();
+    defer cb.deinit();
+    try cb.setRenderTarget(target);
+    // Blue, which differs from the red the shader writes in every channel that
+    // is checked. A target left at its clear colour cannot read as a drawn one.
+    try cb.clear(.{ .r = 0, .g = 0, .b = 1, .a = 1 });
+    try cb.bindPipeline(pipeline);
+    try cb.bindVertexBuffer(vbuf);
+    try cb.draw(verts.len, 0);
+    try ctx.submit(cb);
+
+    const px = try dev.mapResource(target);
+    const centre = (size / 2 * size + size / 2) * 4;
+    if (centre + 2 >= px.len) return false;
+    return px[centre] > 200 and px[centre + 2] < 80;
 }
 
 /// Pick the compiled-in driver that drives the DRM device with the given dev_t,
@@ -95,4 +192,25 @@ test "selectForDrmDevice matches the first render node to a driver (skips otherw
     const dev = @import("platform/drm.zig").makedev(226, 128);
     const d = selectForDrmDevice(dev) orelse return error.SkipZigTest;
     try std.testing.expect(d.drm_driver != null);
+}
+
+test "the device createBestDevice returns can draw, not merely start" {
+    // The whole point of the selection: a caller takes what this hands back and
+    // builds a graphics pipeline on it. A driver that starts and cannot draw
+    // used to win here and fail at that pipeline, with the working software
+    // rasterizer behind it never tried.
+    const gpa = std.testing.allocator;
+    const sel = createBestDevice(gpa) orelse return error.SkipZigTest;
+    defer sel.device.deinit();
+    try std.testing.expect(canDraw(gpa, sel.device));
+}
+
+test "the software rasterizer draws, so it is a real fallback" {
+    // It is the universal last resort, the only driver on a machine with no GPU
+    // and the one in a build sandbox. A fallback that cannot draw is not one.
+    const gpa = std.testing.allocator;
+    const d = select("software") orelse return error.SkipZigTest;
+    const dev = d.createDevice(gpa) catch return error.SkipZigTest;
+    defer dev.deinit();
+    try std.testing.expect(canDraw(gpa, dev));
 }
