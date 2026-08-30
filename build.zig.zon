@@ -9,27 +9,27 @@
             .hash = "xml-0.2.0-ZTbP3yI6AgB9Rpd2hQrueO63ib0Bm6mQiL_WB1t7JAmP",
         },
         .wayland = .{
-            .url = "git+https://github.com/Midstall/wayland.zig#ddd5f5829471e4ba2b5658895132d062db9dbed6",
-            .hash = "wayland-0.1.0-J5KKz0mUBgAKmNFDAKjmiUvbnDiAUpGTyLKQuidMkc_E",
+            .url = "git+https://git.lilithsemi.com/LilithSemi/wayland.zig#7c46a90f066a4c65699c4ca9bd88fd1ae0f12e15",
+            .hash = "wayland-0.1.0-J5KKz46UBgCTceoOwMQXpoBy_Wl1BNvvy1Y2dv_Ay64J",
         },
         .asahi = .{
             .path = "subproject/asahi",
         },
         .vulcan = .{
-            .url = "git+https://github.com/Midstall/vulcan#b62217f98e3ebb984f8ea8a0d99f9c4680a7e0b6",
-            .hash = "vulcan-0.0.0-d6EfZI6fhACrKe1LU2YYf8cQfTldOGoooYQVxvFkWq7s",
+            .url = "git+https://git.lilithsemi.com/LilithSemi/vulcan#8dbb53dca5e923ec497b00a802b25e762ed86369",
+            .hash = "vulcan-0.0.0-d6EfZEDfhAD7LsCcFmT2iQvBeXNm6hPtxPo96ZpF_bFR",
         },
         .drm = .{
-            .url = "git+https://github.com/Midstall/drm.zig#25adace9df06b8b859ee52cc0832bcc4c2223c3a",
+            .url = "git+https://git.lilithsemi.com/LilithSemi/drm.zig#25adace9df06b8b859ee52cc0832bcc4c2223c3a",
             .hash = "drm-0.1.0-ObSCTywHAQAeCZ7R4ZAVRLD63FEkmWIQfOhnfwQwoiBF",
         },
         .gbm = .{
-            .url = "git+https://github.com/Midstall/gbm.zig#8dce1f3fac39bc24d46216eb02b4ba2d1deb2837",
-            .hash = "gbm-0.1.0-B1lS4rKjAABp1g2qsZCSuyIEVf3p0lGMeQdrdronra3s",
+            .url = "git+https://git.lilithsemi.com/LilithSemi/gbm.zig#f71153e3003374573f5a3e664a8efa50cdccf47e",
+            .hash = "gbm-0.1.0-B1lS4sajAAAcYVNDSp6zbOYClrq3RBQW5fNwnyu4tgB2",
         },
         .nvidia = .{
-            .url = "git+https://github.com/Midstall/nvidia.zig#4d0078259dcf6770433e3b42603736b3b70b1006",
-            .hash = "nvidia-0.1.0-nX_09wxuCAAqlGIxDi4j9Z4dNIJzD6AimJvGbaEKyzB-",
+            .url = "git+https://git.lilithsemi.com/LilithSemi/nvidia.zig#55e802c62444eccf8f2919d4b13463e375ae88fe",
+            .hash = "nvidia-0.1.0-nX_09yBuCAAha5yRD62mzBoqRsuQ70hBECJYMieHCn9A",
         },
     },
     .paths = .{
